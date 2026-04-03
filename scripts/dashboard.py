@@ -4,6 +4,7 @@ from __future__ import annotations
 import cgi
 import json
 import mimetypes
+import os
 import subprocess
 import threading
 import traceback
@@ -14,10 +15,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from factory_ingest import INBOX, JOBS, create_job_from_folder, load_env_config, run_job, slugify
+from runtime_paths import CODE_ROOT, DATA_ROOT, ensure_runtime_dirs
 
-
-ROOT = Path(__file__).resolve().parents[1]
-STATE_FILE = ROOT / ".dashboard_state.json"
+ROOT = CODE_ROOT
+STATE_FILE = DATA_ROOT / ".dashboard_state.json"
 STATE_LOCK = threading.Lock()
 
 
@@ -128,6 +129,8 @@ def dashboard_html(message: str = "") -> str:
         error = job.get("error", "")
         preview = infer_output_url(slug) if job.get("has_output") else ""
         preview_link = f'<a class="ghost" href="{preview}">Preview</a>' if preview else ""
+        content_pack = f"/preview/{slug}/content_pack/README.md" if (JOBS / slug / "output" / "content_pack" / "README.md").exists() else ""
+        content_link = f'<a class="ghost" href="{content_pack}">Content Pack</a>' if content_pack else ""
         live_link = f'<a class="ghost" href="{site_url}" target="_blank" rel="noreferrer">Live Site</a>' if site_url else ""
         publish_form = ""
         if job.get("has_output") and status not in {"publishing", "published"}:
@@ -153,6 +156,7 @@ def dashboard_html(message: str = "") -> str:
               <p class="meta"><strong>Updated:</strong> {updated_at}</p>
               <div class="job-actions">
                 {preview_link}
+                {content_link}
                 {live_link}
                 {publish_form}
               </div>
@@ -233,11 +237,15 @@ def dashboard_html(message: str = "") -> str:
               <div class="field-full"><label for="checklist">Checklist</label><textarea id="checklist" name="checklist" placeholder="One item per line"></textarea></div>
               <div class="field"><label for="cta_url">CTA URL</label><input id="cta_url" type="url" name="cta_url" value="{default_cta}" /></div>
               <div class="field"><label for="cta_label">CTA Label</label><input id="cta_label" type="text" name="cta_label" value="Take the full level one certification here for free" /></div>
+              <div class="field"><label for="brand_name">Brand Name</label><input id="brand_name" type="text" name="brand_name" placeholder="JBell / Claude Content Factory" /></div>
+              <div class="field"><label for="target_audience">Target Audience</label><input id="target_audience" type="text" name="target_audience" value="Founders, executives, operators, and employees leveling up with AI" /></div>
+              <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Authority content. Useful, specific, not salesy, not promotional."></textarea></div>
               <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" required /></div>
               <div class="field"><label for="audio">Optional Audio</label><input id="audio" type="file" name="source_audio" accept=".m4a,.mp3,.wav" /></div>
               <div class="field"><label for="vtt">Optional VTT</label><input id="vtt" type="file" name="source_vtt" accept=".vtt" /></div>
             </div>
             <label class="checkline"><input type="checkbox" name="publish_now" value="1" /> Publish to GitHub after build</label>
+            <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, newsletter, and YouTube-ready content</label>
             <div class="actions"><button type="submit">Create Job</button></div>
           </form>
         </div>
@@ -273,9 +281,19 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
         "lead": form.getfirst("lead", "").strip(),
         "cta_url": form.getfirst("cta_url", "").strip(),
         "cta_label": form.getfirst("cta_label", "").strip(),
+        "brand_name": form.getfirst("brand_name", "").strip(),
+        "target_audience": form.getfirst("target_audience", "").strip(),
+        "voice_notes": form.getfirst("voice_notes", "").strip(),
+        "generate_content_pack": form.getfirst("generate_content_pack", "") == "1",
         "checklist": checklist,
     }
-    return {key: value for key, value in manifest.items() if value}
+    filtered: dict[str, object] = {}
+    for key, value in manifest.items():
+        if isinstance(value, bool):
+            filtered[key] = value
+        elif value:
+            filtered[key] = value
+    return filtered
 
 
 def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> None:
@@ -450,10 +468,13 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8090)
+    default_host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    default_port = int(os.environ.get("PORT", "8090"))
+    parser.add_argument("--host", default=default_host)
+    parser.add_argument("--port", type=int, default=default_port)
     args = parser.parse_args()
 
+    ensure_runtime_dirs()
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
     print(f"Dashboard running at http://{args.host}:{args.port}")
     server.serve_forever()

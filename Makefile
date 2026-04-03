@@ -10,6 +10,7 @@ help:
 	@echo "make slack"
 	@echo "make dashboard"
 	@echo "make publish SLUG=example REPO=example-lead-magnet"
+	@echo "make railway-up"
 
 deps:
 	$(PYTHON) -m pip install --user -r requirements.txt
@@ -33,6 +34,9 @@ slack:
 
 dashboard:
 	$(PYTHON) scripts/dashboard.py
+
+railway-up:
+	railway up
 
 publish:
 	$(PYTHON) scripts/publish_job.py "jobs/$(SLUG)" --repo "$(REPO)"

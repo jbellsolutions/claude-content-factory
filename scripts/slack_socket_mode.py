@@ -13,10 +13,9 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
 from factory_ingest import INBOX, create_job_from_folder, load_env_config, run_job, slugify
+from runtime_paths import CODE_ROOT, DATA_ROOT, ensure_runtime_dirs
 
-
-ROOT = Path(__file__).resolve().parents[1]
-STATE_FILE = ROOT / ".slack_state.json"
+STATE_FILE = DATA_ROOT / ".slack_state.json"
 SUPPORTED_EXTS = {".mp4", ".mov", ".m4v", ".m4a", ".mp3", ".wav", ".vtt"}
 
 
@@ -123,7 +122,7 @@ def maybe_publish(job_dir: Path, brief: dict, config: dict[str, str]) -> None:
     repo_name = repo_name_for(job_dir, brief, config)
     subprocess_cmd = [
         "python3",
-        str(ROOT / "scripts" / "publish_job.py"),
+        str(CODE_ROOT / "scripts" / "publish_job.py"),
         str(job_dir),
         "--repo",
         repo_name,
@@ -200,6 +199,7 @@ def process_socket_request(socket_client: SocketModeClient, request: SocketModeR
 
 
 def main() -> None:
+    ensure_runtime_dirs()
     config = load_env_config()
     required = {"SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"}
     missing = [key for key in required if not config.get(key)]

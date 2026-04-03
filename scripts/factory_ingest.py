@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
-
-ROOT = Path(__file__).resolve().parents[1]
-INBOX = ROOT / "inbox"
-JOBS = ROOT / "jobs"
+from runtime_paths import CODE_ROOT, INBOX, JOBS, ensure_runtime_dirs, env_file_candidates
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 AUDIO_EXTS = {".m4a", ".mp3", ".wav"}
@@ -19,7 +17,7 @@ DEFAULT_CTA = "https://jbellsolutions.github.io/claude-code-ecosystem-certificat
 
 def load_env_config() -> dict[str, str]:
     config: dict[str, str] = {}
-    for path in (ROOT / ".env", ROOT / "config" / ".env"):
+    for path in env_file_candidates():
         if not path.exists():
             continue
         for raw_line in path.read_text().splitlines():
@@ -28,6 +26,8 @@ def load_env_config() -> dict[str, str]:
                 continue
             key, value = line.split("=", 1)
             config[key.strip()] = value.strip().strip('"').strip("'")
+    for key, value in os.environ.items():
+        config[key] = value
     return config
 
 
@@ -50,6 +50,10 @@ def default_manifest(slug: str, env: dict[str, str] | None = None) -> dict:
         "kit_form_action": env.get("KIT_FORM_ACTION", ""),
         "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
         "kit_tag": env.get("KIT_TAG", ""),
+        "generate_content_pack": True,
+        "brand_name": env.get("BRAND_NAME", title),
+        "target_audience": env.get("TARGET_AUDIENCE", "Founders, executives, operators, and employees leveling up with AI"),
+        "voice_notes": env.get("VOICE_NOTES", "Authority content. Useful, specific, not salesy, not promotional."),
         "checklist": [
             "Main lesson one",
             "Main lesson two",
@@ -72,6 +76,7 @@ def locate_inputs(folder: Path) -> tuple[Path | None, Path | None, Path | None]:
 
 
 def create_job_from_folder(folder: Path) -> Path:
+    ensure_runtime_dirs()
     env = load_env_config()
     slug = slugify(folder.name)
     job_dir = JOBS / slug
@@ -106,4 +111,4 @@ def create_job_from_folder(folder: Path) -> Path:
 
 
 def run_job(job_dir: Path) -> None:
-    subprocess.run(["python3", str(ROOT / "scripts" / "run_job.py"), str(job_dir)], check=True)
+    subprocess.run(["python3", str(CODE_ROOT / "scripts" / "run_job.py"), str(job_dir)], check=True)

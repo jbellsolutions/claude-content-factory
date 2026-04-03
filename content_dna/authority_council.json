@@ -1,0 +1,74 @@
+{
+  "name": "Titan Authority Council",
+  "positioning": "Create high-trust, authority-building content from transcript material without hype, hard selling, or made-up proof.",
+  "global_rules": [
+    "Do not invent results, client stories, statistics, or case studies not supported by the source material.",
+    "Do not sound promotional, breathless, or salesy.",
+    "Prefer strategic clarity, practical takeaways, and clean authority over persuasion tricks.",
+    "Keep the speaker's core ideas intact and make the content feel native to the target platform."
+  ],
+  "core_voices": [
+    {
+      "key": "jay_abraham",
+      "display_name": "Jay Abraham",
+      "use_for": ["authority_content", "linkedin_article", "medium_article"],
+      "style_traits": ["strategic", "value-dense", "you-focused", "trusted-advisor positioning"]
+    },
+    {
+      "key": "brian_kurtz",
+      "display_name": "Brian Kurtz",
+      "use_for": ["facebook_post", "newsletter", "authority_content"],
+      "style_traits": ["relationship-building", "credible", "insider", "story-backed"]
+    },
+    {
+      "key": "bill_mueller",
+      "display_name": "Bill Mueller",
+      "use_for": ["newsletter"],
+      "style_traits": ["story-led", "curiosity-first", "one-big-idea focus"]
+    },
+    {
+      "key": "liam_ottley",
+      "display_name": "Liam Ottley",
+      "use_for": ["linkedin_post", "youtube_package", "authority_content"],
+      "style_traits": ["modern", "builder-oriented", "AI-native", "practical"]
+    },
+    {
+      "key": "alex_hormozi",
+      "display_name": "Alex Hormozi",
+      "use_for": ["linkedin_post", "youtube_package"],
+      "style_traits": ["direct", "framework-heavy", "specific", "no-fluff"]
+    },
+    {
+      "key": "tom_bilyeu",
+      "display_name": "Tom Bilyeu",
+      "use_for": ["facebook_post", "medium_article", "authority_content"],
+      "style_traits": ["belief-shifting", "clear", "human", "insight-first"]
+    }
+  ],
+  "channel_briefs": {
+    "facebook_post": {
+      "goal": "Make the idea feel immediate and useful without sounding formal or promotional.",
+      "format": "Short post with a sharp opening line, one core insight, practical takeaway, and subtle closing line."
+    },
+    "linkedin_post": {
+      "goal": "Publish a concise authority post that feels strategic and native to LinkedIn.",
+      "format": "Strong hook, clear point of view, 3-5 short body blocks, clean close, no hashtags unless clearly useful."
+    },
+    "linkedin_article": {
+      "goal": "Create a thoughtful authority article that can stand alone as professional thought leadership.",
+      "format": "Compelling title, strong opening, structured sections, concrete examples from transcript, practical close."
+    },
+    "medium_article": {
+      "goal": "Create a readable, insight-rich article for a general but serious audience.",
+      "format": "Narrative opening, strong sectioning, less platform-native than LinkedIn, more essay-like."
+    },
+    "newsletter": {
+      "goal": "Turn one idea from the source into a clean email worth reading on its own.",
+      "format": "3 subject lines, preview text, short intro, one big idea, practical application, soft close."
+    },
+    "youtube_package": {
+      "goal": "Prepare the edited video for publishing without clickbait.",
+      "format": "Title options, description, chapter ideas if possible, tags, pinned comment, thumbnail text angles."
+    }
+  }
+}

@@ -9,6 +9,11 @@ make deps
 cp config/example.env config/.env
 ```
 
+This repo now has two output layers:
+
+- the existing video lead-magnet pipeline
+- a transcript-driven authority content pack for Facebook, LinkedIn, Medium, newsletter, and YouTube publishing
+
 ## What this repo is for
 
 This repo is the engine. It is meant to stay on your computer and run the same workflow over and over:
@@ -21,7 +26,8 @@ This repo is the engine. It is meant to stay on your computer and run the same w
 6. Build the edited video.
 7. Build the PDF companion.
 8. Build the landing page with opt-in capture.
-9. Optionally create a GitHub repo and publish to GitHub Pages.
+9. Generate an authority content pack from the transcript when `OPENAI_API_KEY` is available.
+10. Optionally create a GitHub repo and publish to GitHub Pages.
 
 ## Core idea
 
@@ -37,6 +43,8 @@ There are three layers:
   - Listens to a Slack channel in Socket Mode, downloads uploaded files, and sends them through the same job runner.
 - `scripts/dashboard.py`
   - Runs a local dashboard where you can upload files, monitor jobs, preview outputs, and publish to GitHub.
+- `scripts/content_pack.py`
+  - Uses transcript material plus Titan-style authority-content DNA to generate Facebook, LinkedIn, Medium, newsletter, and YouTube-ready assets.
 
 That means the automation can later be triggered from:
 
@@ -54,7 +62,7 @@ The runner stays the same. Only the trigger changes.
 - `jobs/<slug>/job.json`
   - Manifest for one job
 - `jobs/<slug>/output/`
-  - Generated landing page, edited video, PDF, captions, and assets
+  - Generated landing page, edited video, PDF, captions, assets, and content pack
 - `scripts/new_job.py`
   - Creates a job folder and default manifest
 - `scripts/run_job.py`
@@ -67,6 +75,8 @@ The runner stays the same. Only the trigger changes.
   - Socket Mode Slack listener for channel uploads
 - `scripts/dashboard.py`
   - Local browser dashboard for uploads and publishing
+- `content_dna/authority_council.json`
+  - Embedded Titan-style authority-content routing and voice notes for transcript-based content generation
 
 ## Best current workflow
 
@@ -103,6 +113,16 @@ The watcher will:
 - copy the inputs into the job
 - generate a default manifest if one is missing
 - run the pipeline
+
+If `OPENAI_API_KEY` is set, the same run will also create:
+
+- `output/content_pack/authority-brief.md`
+- `output/content_pack/facebook-post.md`
+- `output/content_pack/linkedin-post.md`
+- `output/content_pack/linkedin-article.md`
+- `output/content_pack/medium-article.md`
+- `output/content_pack/newsletter.md`
+- `output/content_pack/youtube-package.md`
 
 ### Slack automation
 
@@ -179,12 +199,68 @@ http://127.0.0.1:8090
 What it does:
 
 - upload a source video, optional audio, and optional VTT
-- set title, headline, subheadline, lead, checklist, CTA, and repo name
+- set title, headline, subheadline, lead, checklist, CTA, brand context, and repo name
 - queue the build in the background
 - preview the generated landing page locally
+- open the generated content pack
 - publish a completed job to GitHub from the same UI
 
 The dashboard is intentionally local-first. It is the same pipeline with a browser front end, not a separate product.
+
+### Authority content pack
+
+When a transcript is available and `OPENAI_API_KEY` is set, each run also creates an authority-content pack derived from the transcript.
+
+Current outputs:
+
+- Facebook post
+- LinkedIn post
+- LinkedIn article
+- Medium article
+- Newsletter edition
+- YouTube publishing package
+
+The system is tuned for:
+
+- authority over promotion
+- transcript fidelity over invented proof
+- strategic clarity over hype
+- practical value over sales language
+
+The Titan Genome influence is embedded as a compact local DNA file instead of a runtime dependency on the archived repo.
+
+### Railway deployment
+
+Railway is the better fit than Vercel for this repo because:
+
+- this is a Python process with background jobs
+- uploads can be large
+- local file generation is central to the workflow
+- a persistent volume is useful for `jobs/`, `inbox/`, and dashboard state
+
+Recommended Railway setup:
+
+1. Create a Railway project from this repo.
+2. Add a volume and mount it to `/data`.
+3. Set environment variables:
+   - `CONTENT_FACTORY_DATA_ROOT=/data`
+   - `OPENAI_API_KEY=...`
+   - optional `OPENAI_MODEL=gpt-5`
+   - optional `KIT_FORM_ACTION=...`
+   - optional Slack variables if you want Slack ingestion running too
+4. Start command:
+
+```bash
+python3 scripts/dashboard.py
+```
+
+or use:
+
+```bash
+make railway-up
+```
+
+On Railway, the dashboard binds to `0.0.0.0:$PORT` automatically.
 
 ## About automation
 

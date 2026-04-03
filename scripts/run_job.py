@@ -18,6 +18,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
+from content_pack import generate_content_pack
 
 ROOT = Path(__file__).resolve().parents[1]
 DISPLAY_FONT = "/System/Library/Fonts/NewYork.ttf"
@@ -498,12 +499,15 @@ def build_job(job_dir: Path) -> None:
         else:
             segments = auto_segments(cues)
         selected = selected_cues(cues, segments) if segments else cues
-        write_transcript_outputs(job_dir, selected)
+        transcript_path, _ = write_transcript_outputs(job_dir, selected)
         has_captions = True
+    else:
+        transcript_path = None
     render_brand_assets(job_dir, manifest)
     render_video(job_dir, manifest, segments)
     render_pdf(job_dir, manifest)
     render_page(job_dir, manifest, has_captions)
+    generate_content_pack(job_dir, manifest, transcript_path)
     (output_dir / ".nojekyll").write_text("")
     print(f"Built {job_dir.name}")
 

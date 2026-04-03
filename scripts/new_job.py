@@ -7,9 +7,7 @@ import shutil
 from pathlib import Path
 
 from factory_ingest import DEFAULT_CTA, load_env_config, slugify
-
-ROOT = Path(__file__).resolve().parents[1]
-JOBS_DIR = ROOT / "jobs"
+from runtime_paths import JOBS, ensure_runtime_dirs
 
 
 def infer_title(slug: str) -> str:
@@ -39,9 +37,10 @@ def main() -> None:
     parser.add_argument("--lead")
     args = parser.parse_args()
 
+    ensure_runtime_dirs()
     env = load_env_config()
     slug = slugify(args.slug)
-    job_dir = JOBS_DIR / slug
+    job_dir = JOBS / slug
     input_dir = job_dir / "input"
     output_dir = job_dir / "output"
     input_dir.mkdir(parents=True, exist_ok=True)
@@ -62,6 +61,10 @@ def main() -> None:
         "kit_form_action": env.get("KIT_FORM_ACTION", ""),
         "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
         "kit_tag": env.get("KIT_TAG", ""),
+        "generate_content_pack": True,
+        "brand_name": env.get("BRAND_NAME", title),
+        "target_audience": env.get("TARGET_AUDIENCE", "Founders, executives, operators, and employees leveling up with AI"),
+        "voice_notes": env.get("VOICE_NOTES", "Authority content. Useful, specific, not salesy, not promotional."),
         "checklist": [
             "Key lesson one",
             "Key lesson two",
