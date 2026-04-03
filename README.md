@@ -108,17 +108,19 @@ The watcher will:
 
 1. Create a Slack app with Socket Mode enabled.
 2. Add these bot scopes:
-   - `channels:history`
-   - `channels:read`
-   - `files:read`
-   - `groups:history`
-   - `groups:read`
-3. Install the app to your workspace.
-4. Copy your tokens into `config/.env`:
+   - `channels:history` for public channel uploads
+   - `groups:history` if you want private channel uploads
+   - `files:read` so the bot can call `files.info` and download the uploaded files
+3. In Event Subscriptions, subscribe to these bot events:
+   - `message.channels`
+   - `message.groups` if you want private channel uploads
+4. Install the app to your workspace.
+5. Copy your tokens into `config/.env`:
    - `SLACK_BOT_TOKEN=xoxb-...`
    - `SLACK_APP_TOKEN=xapp-...`
    - `SLACK_ALLOWED_CHANNELS=C01234567,C07654321`
-5. Start the listener:
+6. Invite the bot into the channel you want to use.
+7. Start the listener:
 
 ```bash
 make slack
