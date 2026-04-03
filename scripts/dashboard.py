@@ -10,6 +10,7 @@ import threading
 import traceback
 import urllib.parse
 from datetime import datetime
+from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -88,6 +89,10 @@ def infer_output_url(slug: str) -> str:
     return f"/preview/{slug}/index.html"
 
 
+def infer_run_url(slug: str) -> str:
+    return f"/run/{slug}"
+
+
 def safe_relative_path(base: Path, raw: str) -> Path | None:
     candidate = (base / urllib.parse.unquote(raw.lstrip("/"))).resolve()
     try:
@@ -128,6 +133,8 @@ def dashboard_html(message: str = "") -> str:
         site_url = job.get("site_url", "")
         error = job.get("error", "")
         preview = infer_output_url(slug) if job.get("has_output") else ""
+        run_url = infer_run_url(slug)
+        run_link = f'<a class="ghost" href="{run_url}">Open Run</a>'
         preview_link = f'<a class="ghost" href="{preview}">Preview</a>' if preview else ""
         content_pack = f"/preview/{slug}/content_pack/README.md" if (JOBS / slug / "output" / "content_pack" / "README.md").exists() else ""
         content_link = f'<a class="ghost" href="{content_pack}">Content Pack</a>' if content_pack else ""
@@ -155,6 +162,7 @@ def dashboard_html(message: str = "") -> str:
               <p class="meta"><strong>Slug:</strong> {slug}</p>
               <p class="meta"><strong>Updated:</strong> {updated_at}</p>
               <div class="job-actions">
+                {run_link}
                 {preview_link}
                 {content_link}
                 {live_link}
@@ -296,6 +304,175 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
     return filtered
 
 
+def content_file_specs() -> list[tuple[str, str, str]]:
+    return [
+        ("overview", "Overview", "README.md"),
+        ("brief", "Authority Brief", "authority-brief.md"),
+        ("facebook", "Facebook Post", "facebook-post.md"),
+        ("linkedin-post", "LinkedIn Post", "linkedin-post.md"),
+        ("linkedin-article", "LinkedIn Article", "linkedin-article.md"),
+        ("medium", "Medium Article", "medium-article.md"),
+        ("newsletter", "Newsletter", "newsletter.md"),
+        ("youtube", "YouTube Package", "youtube-package.md"),
+        ("context", "Source Context", "source-context.md"),
+        ("errors", "Errors", "generation-error.md"),
+    ]
+
+
+def read_optional_text(path: Path) -> str:
+    return path.read_text() if path.exists() else ""
+
+
+def directory_listing_html(slug: str, relative: str, folder: Path) -> str:
+    items = []
+    for path in sorted(folder.iterdir()):
+        label = path.name + ("/" if path.is_dir() else "")
+        href = f"/preview/{slug}/{relative.strip('/') + '/' if relative else ''}{path.name}"
+        items.append(f'<li><a href="{href}">{escape(label)}</a></li>')
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Folder Listing</title>
+    <style>
+      body{{font-family:"Avenir Next","Segoe UI",sans-serif;padding:24px;background:#f7efe4;color:#12313e}}
+      a{{color:#12313e}} ul{{line-height:1.9}}
+    </style>
+  </head>
+  <body>
+    <h1>{escape(relative or slug)}</h1>
+    <ul>{''.join(items)}</ul>
+  </body>
+</html>"""
+
+
+def run_detail_html(slug: str) -> str:
+    job_dir = JOBS / slug
+    manifest_path = job_dir / "job.json"
+    if not manifest_path.exists():
+        return "<h1>Run not found</h1>"
+
+    manifest = json.loads(manifest_path.read_text())
+    output_dir = job_dir / "output"
+    content_dir = output_dir / "content_pack"
+    transcript_path = output_dir / "transcripts" / "transcript.txt"
+    preview_url = infer_output_url(slug) if (output_dir / "index.html").exists() else ""
+    state = load_state().get("jobs", {}).get(slug, {})
+    site_url = state.get("site_url", "")
+
+    tabs: list[str] = []
+    panels: list[str] = []
+    available = False
+    for tab_id, label, filename in content_file_specs():
+        file_path = content_dir / filename
+        if not file_path.exists():
+            continue
+        available = True
+        tabs.append(f'<a class="run-tab" href="#{tab_id}">{label}</a>')
+        panels.append(
+            f"""
+            <section class="run-panel" id="{tab_id}">
+              <div class="run-panel-head">
+                <h2>{label}</h2>
+                <a class="ghost" href="/preview/{slug}/content_pack/{filename}" target="_blank" rel="noreferrer">Open File</a>
+              </div>
+              <textarea readonly>{escape(read_optional_text(file_path))}</textarea>
+            </section>
+            """
+        )
+
+    transcript_panel = ""
+    transcript_exists = transcript_path.exists()
+    if transcript_exists:
+        tabs.append('<a class="run-tab" href="#transcript">Transcript</a>')
+        transcript_panel = f"""
+        <section class="run-panel" id="transcript">
+          <div class="run-panel-head">
+            <h2>Transcript</h2>
+            <a class="ghost" href="/preview/{slug}/transcripts/transcript.txt" target="_blank" rel="noreferrer">Open File</a>
+          </div>
+          <textarea readonly>{escape(read_optional_text(transcript_path))}</textarea>
+        </section>
+        """
+
+    asset_links = []
+    if preview_url:
+        asset_links.append(f'<a class="ghost" href="{preview_url}">Landing Page</a>')
+    if (output_dir / "edited_video" / "lead-magnet.mp4").exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/edited_video/lead-magnet.mp4" target="_blank" rel="noreferrer">Edited Video</a>')
+    if (output_dir / "deliverables" / "companion-guide.pdf").exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/deliverables/companion-guide.pdf" target="_blank" rel="noreferrer">PDF</a>')
+    if site_url:
+        asset_links.append(f'<a class="ghost" href="{site_url}" target="_blank" rel="noreferrer">Live Site</a>')
+
+    empty_state = ""
+    if not available:
+        empty_state = """
+        <section class="run-panel" id="overview">
+          <div class="run-panel-head"><h2>Content Pack</h2></div>
+          <p class="muted">This run does not have generated channel content yet. If the transcript exists, set <code>OPENAI_API_KEY</code> and run the job again.</p>
+        </section>
+        """
+
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{escape(manifest['title'])} Run</title>
+    <style>
+      :root{{--surface:rgba(248,239,225,.88);--surface-2:rgba(255,248,239,.68);--ink:#12313e;--muted:#53686e;--line:rgba(18,49,62,.14);--accent:#ea7f3a;--shadow:0 30px 80px rgba(4,20,29,.24)}}
+      *{{box-sizing:border-box}} body{{margin:0;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--ink);background:radial-gradient(circle at top left,rgba(234,127,58,.28),transparent 24%),radial-gradient(circle at top right,rgba(85,131,141,.22),transparent 24%),linear-gradient(180deg,#d2b28d 0%,#173441 42%,#081721 100%);min-height:100vh}}
+      .shell{{width:min(1280px,calc(100vw - 28px));margin:0 auto;padding:24px 0 42px}}
+      .topbar,.summary,.run-workspace{{margin-top:24px;border-radius:32px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}}
+      .topbar,.summary,.run-workspace{{padding:24px}}
+      h1,h2{{margin:0;font-family:"New York","Iowan Old Style",Georgia,serif}} h1{{font-size:clamp(2.4rem,5vw,4rem);line-height:.95}} h2{{font-size:clamp(1.6rem,3vw,2.4rem)}}
+      p{{margin:0}} .eyebrow{{margin:0 0 8px;text-transform:uppercase;letter-spacing:.08em;font-size:.76rem;font-weight:800;color:var(--accent)}} .muted{{color:var(--muted);line-height:1.65}}
+      .topbar-links,.summary-links,.run-tabs{{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}}
+      .ghost{{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:rgba(255,255,255,.62);color:var(--ink);border:1px solid var(--line);text-decoration:none;font-weight:700}}
+      .run-tabs{{position:sticky;top:12px;z-index:5;margin-top:0;padding-bottom:18px;background:linear-gradient(180deg,var(--surface),rgba(248,239,225,.95))}}
+      .run-tab{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:999px;background:rgba(18,49,62,.08);color:var(--ink);text-decoration:none;font-weight:700;border:1px solid var(--line)}}
+      .run-panel{{margin-top:18px;padding:22px;border-radius:26px;background:var(--surface-2);border:1px solid rgba(255,255,255,.34)}}
+      .run-panel-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}}
+      textarea{{width:100%;min-height:520px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}}
+      .meta-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}}
+      .meta-card{{padding:16px;border-radius:20px;background:rgba(255,255,255,.48);border:1px solid var(--line)}} .meta-card strong{{display:block;margin-bottom:6px}}
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <p class="eyebrow">Run Workspace</p>
+        <h1>{escape(manifest['title'])}</h1>
+        <p class="muted">{escape(manifest.get('headline', ''))}</p>
+        <div class="topbar-links">
+          <a class="ghost" href="/">Back To Dashboard</a>
+          {''.join(asset_links)}
+        </div>
+      </header>
+      <section class="summary">
+        <p class="eyebrow">Run Summary</p>
+        <div class="meta-grid">
+          <div class="meta-card"><strong>Slug</strong>{escape(slug)}</div>
+          <div class="meta-card"><strong>Status</strong>{escape(state.get('status', 'unknown'))}</div>
+          <div class="meta-card"><strong>Updated</strong>{escape(state.get('updated_at', ''))}</div>
+          <div class="meta-card"><strong>Content Folder</strong><a href="/preview/{slug}/content_pack" class="ghost">Open Folder</a></div>
+        </div>
+      </section>
+      <section class="run-workspace">
+        <div class="run-tabs">
+          {''.join(tabs) if tabs else '<span class="muted">No channel content yet.</span>'}
+        </div>
+        {empty_state}
+        {''.join(panels)}
+        {transcript_panel}
+      </section>
+    </div>
+  </body>
+</html>"""
+
+
 def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> None:
     update_job_state(slug, status="running", error="")
     try:
@@ -373,6 +550,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             message = query.get("message", [""])[0]
             self.send_html(dashboard_html(message))
             return
+        if self.path.startswith("/run/"):
+            slug = urllib.parse.unquote(self.path.removeprefix("/run/")).strip("/")
+            if not slug:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            self.send_html(run_detail_html(slug))
+            return
         if self.path.startswith("/preview/"):
             raw = self.path.removeprefix("/preview/")
             parts = raw.split("/", 1)
@@ -382,8 +566,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             slug = parts[0]
             relative = parts[1] if len(parts) > 1 and parts[1] else "index.html"
             file_path = safe_relative_path(JOBS / slug / "output", relative)
-            if not file_path or not file_path.exists() or file_path.is_dir():
+            if not file_path or not file_path.exists():
                 self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            if file_path.is_dir():
+                self.send_html(directory_listing_html(slug, relative, file_path))
                 return
             content = file_path.read_bytes()
             mime, _ = mimetypes.guess_type(str(file_path))
