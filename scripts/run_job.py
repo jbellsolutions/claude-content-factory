@@ -91,14 +91,17 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def font(paths: str | list[str], size: int) -> ImageFont.FreeTypeFont:
+def font(paths: str | list[str], size: int) -> ImageFont.ImageFont:
     candidates = [paths] if isinstance(paths, str) else paths
     for path in candidates:
         try:
             return ImageFont.truetype(path, size=size)
         except OSError:
             continue
-    return ImageFont.load_default(size=size)
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def wrap(text: str, width: int) -> str:
@@ -258,8 +261,8 @@ def draw_badge(img: Image.Image, center: tuple[int, int], radius: int, top: str,
         x2 = cx + math.cos(angle) * (radius + 8)
         y2 = cy + math.sin(angle) * (radius + 8)
         draw.line((x1, y1, x2, y2), fill="#ea7f3a", width=3)
-    draw.text((cx - 82, cy - 22), top, font=font(DISPLAY_BOLD, 26), fill="#153540")
-    draw.text((cx - 50, cy + 8), bottom, font=font(SANS_FONT, 18), fill="#4f6267")
+    draw.text((cx - 82, cy - 22), top, font=font(DISPLAY_BOLD_CANDIDATES, 26), fill="#153540")
+    draw.text((cx - 50, cy + 8), bottom, font=font(SANS_FONT_CANDIDATES, 18), fill="#4f6267")
 
 
 def render_brand_assets(job_dir: Path, manifest: dict) -> None:
@@ -270,12 +273,12 @@ def render_brand_assets(job_dir: Path, manifest: dict) -> None:
         img = make_background(1280, 720)
         draw = ImageDraw.Draw(img)
         draw.rounded_rectangle((78, 74, 1196, 646), radius=42, fill="#f8efe1", outline="#dbcbb6", width=2)
-        draw.text((126, 136), kind, font=font(SANS_FONT, 24), fill="#ea7f3a")
+        draw.text((126, 136), kind, font=font(SANS_FONT_CANDIDATES, 24), fill="#ea7f3a")
         title_text = wrap(title, 18)
-        draw.multiline_text((126, 184), title_text, font=font(DISPLAY_FONT, 56), fill="#102731", spacing=6)
-        title_box = draw.multiline_textbbox((126, 184), title_text, font=font(DISPLAY_FONT, 56), spacing=6)
+        draw.multiline_text((126, 184), title_text, font=font(DISPLAY_FONT_CANDIDATES, 56), fill="#102731", spacing=6)
+        title_box = draw.multiline_textbbox((126, 184), title_text, font=font(DISPLAY_FONT_CANDIDATES, 56), spacing=6)
         body_y = title_box[3] + 26
-        draw.multiline_text((126, body_y), wrap(body, 34), font=font(SANS_FONT, 26), fill="#4f6267", spacing=10)
+        draw.multiline_text((126, body_y), wrap(body, 34), font=font(SANS_FONT_CANDIDATES, 26), fill="#4f6267", spacing=10)
         draw_badge(img, (1040, 514), 88, "Claude", "Guide")
         img.save(path, quality=95)
 
@@ -295,15 +298,15 @@ def render_brand_assets(job_dir: Path, manifest: dict) -> None:
     hero = make_background(1500, 980)
     draw = ImageDraw.Draw(hero)
     draw.rounded_rectangle((72, 76, 962, 892), radius=42, fill="#f8efe1", outline="#dbcbb6", width=2)
-    draw.text((124, 138), "LEAD MAGNET", font=font(SANS_FONT, 24), fill="#ea7f3a")
+    draw.text((124, 138), "LEAD MAGNET", font=font(SANS_FONT_CANDIDATES, 24), fill="#ea7f3a")
     title_text = wrap(manifest["title"], 16)
-    draw.multiline_text((124, 184), title_text, font=font(DISPLAY_FONT, 78), fill="#102731", spacing=8)
-    title_box = draw.multiline_textbbox((124, 184), title_text, font=font(DISPLAY_FONT, 78), spacing=8)
+    draw.multiline_text((124, 184), title_text, font=font(DISPLAY_FONT_CANDIDATES, 78), fill="#102731", spacing=8)
+    title_box = draw.multiline_textbbox((124, 184), title_text, font=font(DISPLAY_FONT_CANDIDATES, 78), spacing=8)
     headline_y = title_box[3] + 18
-    draw.multiline_text((124, headline_y), wrap(manifest["headline"], 24), font=font(DISPLAY_BOLD, 34), fill="#153540", spacing=8)
-    headline_box = draw.multiline_textbbox((124, headline_y), wrap(manifest["headline"], 24), font=font(DISPLAY_BOLD, 34), spacing=8)
+    draw.multiline_text((124, headline_y), wrap(manifest["headline"], 24), font=font(DISPLAY_BOLD_CANDIDATES, 34), fill="#153540", spacing=8)
+    headline_box = draw.multiline_textbbox((124, headline_y), wrap(manifest["headline"], 24), font=font(DISPLAY_BOLD_CANDIDATES, 34), spacing=8)
     body_y = headline_box[3] + 20
-    draw.multiline_text((124, body_y), wrap(manifest["subheadline"], 38), font=font(SANS_FONT, 28), fill="#4f6267", spacing=10)
+    draw.multiline_text((124, body_y), wrap(manifest["subheadline"], 38), font=font(SANS_FONT_CANDIDATES, 28), fill="#4f6267", spacing=10)
     draw_badge(hero, (1304, 870), 70, "Claude", "Factory")
     hero.save(assets / "hero-art.png", quality=95)
     hero.save(assets / "social-card.png", quality=95)

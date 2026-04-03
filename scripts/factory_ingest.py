@@ -118,4 +118,22 @@ def create_job_from_folder(folder: Path) -> Path:
 
 
 def run_job(job_dir: Path) -> None:
-    subprocess.run(["python3", str(CODE_ROOT / "scripts" / "run_job.py"), str(job_dir)], check=True)
+    result = subprocess.run(
+        ["python3", str(CODE_ROOT / "scripts" / "run_job.py"), str(job_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    log_text = "\n".join(
+        part for part in [
+            "=== STDOUT ===",
+            result.stdout.strip(),
+            "",
+            "=== STDERR ===",
+            result.stderr.strip(),
+        ] if part is not None
+    ).strip() + "\n"
+    (job_dir / "run.log").write_text(log_text)
+    if result.returncode != 0:
+        error_text = result.stderr.strip() or result.stdout.strip() or f"run_job.py exited with status {result.returncode}"
+        raise RuntimeError(error_text)
