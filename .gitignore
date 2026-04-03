@@ -1,0 +1,8 @@
+jobs/*/input/
+jobs/*/output/
+inbox/*/.processed
+inbox/*/.processing
+published/
+.DS_Store
+*.pyc
+__pycache__/
