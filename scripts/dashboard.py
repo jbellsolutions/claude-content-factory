@@ -5,6 +5,7 @@ import cgi
 import json
 import mimetypes
 import os
+import shutil
 import subprocess
 import threading
 import traceback
@@ -48,6 +49,13 @@ def update_job_state(slug: str, **changes: object) -> None:
         current.update(changes)
         current["updated_at"] = now_iso()
         jobs[slug] = current
+        save_state(state)
+
+
+def remove_job_state(slug: str) -> None:
+    with STATE_LOCK:
+        state = load_state()
+        state.setdefault("jobs", {}).pop(slug, None)
         save_state(state)
 
 
@@ -159,6 +167,12 @@ def dashboard_html(message: str = "") -> str:
         content_link = f'<a class="ghost" href="{content_pack}">Content Pack</a>' if content_pack else ""
         live_link = f'<a class="ghost" href="{site_url}" target="_blank" rel="noreferrer">Live Site</a>' if site_url else ""
         publish_form = ""
+        delete_form = f"""
+        <form class="delete-form" method="post" action="/delete" onsubmit="return confirm('Delete this run from the dashboard and local storage?');">
+          <input type="hidden" name="slug" value="{slug}" />
+          <button type="submit" class="danger-button">Delete</button>
+        </form>
+        """
         if job.get("has_output") and status not in {"publishing", "published"}:
             publish_form = f"""
             <form class="inline-form" method="post" action="/publish">
@@ -186,6 +200,7 @@ def dashboard_html(message: str = "") -> str:
                 {content_link}
                 {live_link}
                 {publish_form}
+                {delete_form}
               </div>
               {error_block}
             </article>
@@ -204,12 +219,14 @@ def dashboard_html(message: str = "") -> str:
       :root{{--surface:rgba(248,239,225,.88);--surface-2:rgba(255,248,239,.68);--ink:#12313e;--muted:#53686e;--line:rgba(18,49,62,.14);--accent:#ea7f3a;--green:#2f7456;--amber:#9b5c18;--red:#8d2f2f;--shadow:0 30px 80px rgba(4,20,29,.24)}}
       *{{box-sizing:border-box}}body{{margin:0;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--ink);background:radial-gradient(circle at top left,rgba(234,127,58,.28),transparent 24%),radial-gradient(circle at top right,rgba(85,131,141,.22),transparent 24%),linear-gradient(180deg,#d2b28d 0%,#173441 42%,#081721 100%);min-height:100vh}}
       .shell{{width:min(1220px,calc(100vw - 28px));margin:0 auto;padding:24px 0 42px}}
-      .topbar,.panel,.jobs{{margin-top:24px;border-radius:32px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}}
+      .topbar,.panel,.jobs,.tabs-shell{{margin-top:24px;border-radius:32px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}}
       .topbar{{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:20px 24px}}
       .eyebrow{{margin:0 0 8px;text-transform:uppercase;letter-spacing:.08em;font-size:.76rem;font-weight:800;color:var(--accent)}}
       h1,h2,h3{{margin:0;font-family:"New York","Iowan Old Style",Georgia,serif}} h1{{font-size:clamp(2.6rem,5vw,4.4rem);line-height:.95}} h2{{font-size:clamp(2rem,4vw,3rem);line-height:.98}} h3{{font-size:1.5rem;line-height:1.05}}
       p{{margin:0}} .muted{{color:var(--muted);line-height:1.65;max-width:56rem}}
       .flash{{margin-top:18px;padding:14px 18px;border-radius:18px;background:rgba(47,116,86,.12);border:1px solid rgba(47,116,86,.18);color:var(--green)}}
+      .tabs-shell{{padding:14px 18px}} .dashboard-tabs{{display:flex;gap:10px;flex-wrap:wrap}} .dashboard-tab{{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.56);color:var(--ink);text-decoration:none;font-weight:800}} .dashboard-tab.active{{background:var(--ink);color:#fff8ef;border-color:transparent}}
+      .dashboard-section.hidden{{display:none}}
       .panel{{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;padding:28px}}
       .form-grid{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
       .field,.field-full{{display:flex;flex-direction:column;gap:8px}}
@@ -222,17 +239,20 @@ def dashboard_html(message: str = "") -> str:
       button{{background:var(--ink);color:#fff8ef;cursor:pointer}} .ghost{{background:rgba(255,255,255,.62);color:var(--ink);border:1px solid var(--line)}}
       .actions{{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}}
       .jobs{{padding:28px}}
-      .job-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:22px}}
-      .job-card{{padding:20px;border-radius:24px;background:var(--surface-2);border:1px solid rgba(255,255,255,.34)}}
+      .job-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:22px}}
+      .job-card{{padding:16px;border-radius:22px;background:var(--surface-2);border:1px solid rgba(255,255,255,.34)}}
       .job-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}
+      .job-head h3{{font-size:1.18rem;line-height:1.08}}
       .status{{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border-radius:999px;font-size:.85rem;font-weight:800;text-transform:capitalize}}
       .status-queued,.status-publishing{{background:rgba(155,92,24,.12);color:var(--amber)}}
       .status-running{{background:rgba(21,53,64,.12);color:var(--ink)}}
       .status-completed,.status-published{{background:rgba(47,116,86,.12);color:var(--green)}}
       .status-failed{{background:rgba(141,47,47,.12);color:var(--red)}}
-      .meta{{margin-top:10px;color:var(--muted)}}
-      .job-actions{{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}}
-      .inline-form{{display:flex;gap:10px;flex-wrap:wrap}} .inline-form input{{width:220px;padding:12px 14px;border-radius:999px}}
+      .meta{{margin-top:8px;color:var(--muted);font-size:.95rem}}
+      .job-actions{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}
+      .job-actions .ghost,.job-actions button{{min-height:40px;padding:0 14px;font-size:.92rem}}
+      .inline-form{{display:flex;gap:8px;flex-wrap:wrap}} .inline-form input{{width:180px;padding:10px 12px;border-radius:999px}}
+      .delete-form{{display:inline-flex}} .danger-button{{background:rgba(141,47,47,.12);color:var(--red);border:1px solid rgba(141,47,47,.18)}}
       .empty{{margin-top:18px;color:var(--muted)}}
       .error{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(141,47,47,.08);color:var(--red);white-space:pre-wrap}}
       .tips{{padding:22px;border-radius:26px;background:linear-gradient(180deg,rgba(8,23,33,.98),rgba(14,36,48,.92));color:#f8efe1}}
@@ -256,7 +276,13 @@ def dashboard_html(message: str = "") -> str:
         </div>
       </header>
       {info_box}
-      <section class="panel">
+      <section class="tabs-shell">
+        <nav class="dashboard-tabs">
+          <a class="dashboard-tab active" href="#create" data-tab="create">Create</a>
+          <a class="dashboard-tab" href="#runs" data-tab="runs">Runs</a>
+        </nav>
+      </section>
+      <section class="panel dashboard-section" id="tab-create">
         <div>
           <p class="eyebrow">New Job</p>
           <h2>Drop in a video and run the pipeline.</h2>
@@ -294,7 +320,7 @@ def dashboard_html(message: str = "") -> str:
           </ul>
         </aside>
       </section>
-      <section class="jobs">
+      <section class="jobs dashboard-section hidden" id="tab-runs">
         <p class="eyebrow">Recent Jobs</p>
         <h2>Track builds, previews, and publishing.</h2>
         <div class="job-grid">
@@ -314,6 +340,28 @@ def dashboard_html(message: str = "") -> str:
       (() => {{
         const form = document.getElementById('upload-form');
         const lightbox = document.getElementById('submit-lightbox');
+        const tabs = Array.from(document.querySelectorAll('[data-tab]'));
+        const sections = {{
+          create: document.getElementById('tab-create'),
+          runs: document.getElementById('tab-runs')
+        }};
+        function selectTab(name) {{
+          tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
+          Object.entries(sections).forEach(([key, el]) => {{
+            if (!el) return;
+            el.classList.toggle('hidden', key !== name);
+          }});
+        }}
+        const initialTab = window.location.hash === '#runs' ? 'runs' : 'create';
+        selectTab(initialTab);
+        tabs.forEach((tab) => {{
+          tab.addEventListener('click', (event) => {{
+            event.preventDefault();
+            const next = tab.dataset.tab || 'create';
+            window.history.replaceState(null, '', '#' + next);
+            selectTab(next);
+          }});
+        }});
         if (!form || !lightbox) return;
         form.addEventListener('submit', () => {{
           lightbox.classList.add('active');
@@ -510,6 +558,7 @@ def run_detail_html(slug: str) -> str:
       .status-pill{{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border-radius:999px;background:rgba(18,49,62,.08);font-weight:800;text-transform:capitalize}}
       .status-failed{{background:rgba(141,47,47,.12);color:#8d2f2f}}
       .status-completed,.status-published{{background:rgba(47,116,86,.12);color:#2f7456}}
+      .danger-button{{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:rgba(141,47,47,.12);color:#8d2f2f;border:1px solid rgba(141,47,47,.18);font-weight:800;cursor:pointer}}
     </style>
   </head>
   <body>
@@ -521,6 +570,10 @@ def run_detail_html(slug: str) -> str:
         <div class="topbar-links">
           <a class="ghost" href="/">Back To Dashboard</a>
           {''.join(asset_links)}
+          <form method="post" action="/delete" onsubmit="return confirm('Delete this run from the dashboard and local storage?');">
+            <input type="hidden" name="slug" value="{escape(slug)}" />
+            <button type="submit" class="danger-button">Delete Run</button>
+          </form>
         </div>
       </header>
       <section class="progress-shell">
@@ -654,6 +707,13 @@ def publish_existing_job(slug: str, repo_name: str) -> None:
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 
 
+def delete_job(slug: str) -> None:
+    job_dir = JOBS / slug
+    if job_dir.exists():
+        shutil.rmtree(job_dir)
+    remove_job_state(slug)
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
         data = json.dumps(payload).encode("utf-8")
@@ -728,6 +788,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/publish":
             self.handle_publish()
             return
+        if self.path == "/delete":
+            self.handle_delete()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def handle_upload(self) -> None:
@@ -786,6 +849,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         threading.Thread(target=publish_existing_job, args=(slug, repo_name), daemon=True).start()
         message = urllib.parse.quote(f"Publishing {slug} to GitHub.")
         self.redirect(f"/?message={message}")
+
+    def handle_delete(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        slug = payload.get("slug", [""])[0].strip()
+        if not slug:
+            self.send_html(dashboard_html("Missing job slug."), status=HTTPStatus.BAD_REQUEST)
+            return
+        delete_job(slug)
+        message = urllib.parse.quote(f"Deleted {slug} from the dashboard.")
+        self.redirect(f"/?message={message}#runs")
 
     def log_message(self, format: str, *args: object) -> None:
         return
