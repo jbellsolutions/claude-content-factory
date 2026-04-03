@@ -6,6 +6,7 @@ published/
 .env
 config/.env
 .slack_state.json
+.dashboard_state.json
 .DS_Store
 *.pyc
 __pycache__/

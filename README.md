@@ -35,6 +35,8 @@ There are three layers:
   - Watches `inbox/` and automatically creates and runs jobs when new folders arrive.
 - `scripts/slack_socket_mode.py`
   - Listens to a Slack channel in Socket Mode, downloads uploaded files, and sends them through the same job runner.
+- `scripts/dashboard.py`
+  - Runs a local dashboard where you can upload files, monitor jobs, preview outputs, and publish to GitHub.
 
 That means the automation can later be triggered from:
 
@@ -63,6 +65,8 @@ The runner stays the same. Only the trigger changes.
   - Polling watcher for the drop folder
 - `scripts/slack_socket_mode.py`
   - Socket Mode Slack listener for channel uploads
+- `scripts/dashboard.py`
+  - Local browser dashboard for uploads and publishing
 
 ## Best current workflow
 
@@ -155,6 +159,30 @@ or:
 ```
 
 If `SLACK_AUTO_PUBLISH=true`, the listener will also run the GitHub publish step after the build finishes.
+
+### Local dashboard
+
+Start the dashboard:
+
+```bash
+make dashboard
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8090
+```
+
+What it does:
+
+- upload a source video, optional audio, and optional VTT
+- set title, headline, subheadline, lead, checklist, CTA, and repo name
+- queue the build in the background
+- preview the generated landing page locally
+- publish a completed job to GitHub from the same UI
+
+The dashboard is intentionally local-first. It is the same pipeline with a browser front end, not a separate product.
 
 ## About automation
 

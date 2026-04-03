@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help deps new run watch slack publish
+.PHONY: help deps new run watch slack dashboard publish
 
 help:
 	@echo "make deps"
@@ -8,6 +8,7 @@ help:
 	@echo "make run SLUG=example"
 	@echo "make watch"
 	@echo "make slack"
+	@echo "make dashboard"
 	@echo "make publish SLUG=example REPO=example-lead-magnet"
 
 deps:
@@ -29,6 +30,9 @@ watch:
 
 slack:
 	$(PYTHON) scripts/slack_socket_mode.py
+
+dashboard:
+	$(PYTHON) scripts/dashboard.py
 
 publish:
 	$(PYTHON) scripts/publish_job.py "jobs/$(SLUG)" --repo "$(REPO)"
