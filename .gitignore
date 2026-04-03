@@ -3,6 +3,9 @@ jobs/*/output/
 inbox/*/.processed
 inbox/*/.processing
 published/
+.env
+config/.env
+.slack_state.json
 .DS_Store
 *.pyc
 __pycache__/

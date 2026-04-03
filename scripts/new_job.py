@@ -3,18 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 from pathlib import Path
 
+from factory_ingest import DEFAULT_CTA, load_env_config, slugify
 
 ROOT = Path(__file__).resolve().parents[1]
 JOBS_DIR = ROOT / "jobs"
-DEFAULT_CTA = "https://jbellsolutions.github.io/claude-code-ecosystem-certification/"
-
-
-def slugify(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
 def infer_title(slug: str) -> str:
@@ -44,6 +39,7 @@ def main() -> None:
     parser.add_argument("--lead")
     args = parser.parse_args()
 
+    env = load_env_config()
     slug = slugify(args.slug)
     job_dir = JOBS_DIR / slug
     input_dir = job_dir / "input"
@@ -60,11 +56,12 @@ def main() -> None:
         or "This page was generated from a reusable factory pipeline that cleans transcripts, renders a branded video, builds a PDF companion, and prepares a publishable landing page.",
         "lead": args.lead
         or "Use this as a starting point, then tighten the copy, CTA, and checklist before publishing if you want a sharper offer.",
-        "cta_url": DEFAULT_CTA,
+        "cta_url": env.get("DEFAULT_CTA_URL", DEFAULT_CTA),
         "cta_label": "Take the full level one certification here for free",
         "pdf_title": f"{title} Companion Guide",
-        "kit_form_action": "",
-        "kit_button_text": "Get Access",
+        "kit_form_action": env.get("KIT_FORM_ACTION", ""),
+        "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
+        "kit_tag": env.get("KIT_TAG", ""),
         "checklist": [
             "Key lesson one",
             "Key lesson two",

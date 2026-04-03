@@ -2,6 +2,13 @@
 
 Reusable local repo for turning raw recordings into lead magnets, social-ready assets, and publishable static sites.
 
+## Install
+
+```bash
+make deps
+cp config/example.env config/.env
+```
+
 ## What this repo is for
 
 This repo is the engine. It is meant to stay on your computer and run the same workflow over and over:
@@ -26,12 +33,14 @@ There are three layers:
   - Runs the full pipeline for that job.
 - `scripts/watch_dropfolder.py`
   - Watches `inbox/` and automatically creates and runs jobs when new folders arrive.
+- `scripts/slack_socket_mode.py`
+  - Listens to a Slack channel in Socket Mode, downloads uploaded files, and sends them through the same job runner.
 
 That means the automation can later be triggered from:
 
 - Codex running in this repo
 - a Finder drop folder
-- a Slack bot that saves files into `inbox/`
+- a Slack bot that saves files into `inbox/` and runs the job automatically
 - a dashboard that uploads files and calls the same runner
 
 The runner stays the same. Only the trigger changes.
@@ -52,6 +61,8 @@ The runner stays the same. Only the trigger changes.
   - Creates a GitHub repo, pushes the output, and enables Pages
 - `scripts/watch_dropfolder.py`
   - Polling watcher for the drop folder
+- `scripts/slack_socket_mode.py`
+  - Socket Mode Slack listener for channel uploads
 
 ## Best current workflow
 
@@ -89,11 +100,67 @@ The watcher will:
 - generate a default manifest if one is missing
 - run the pipeline
 
+### Slack automation
+
+1. Create a Slack app with Socket Mode enabled.
+2. Add these bot scopes:
+   - `channels:history`
+   - `channels:read`
+   - `files:read`
+   - `groups:history`
+   - `groups:read`
+3. Install the app to your workspace.
+4. Copy your tokens into `config/.env`:
+   - `SLACK_BOT_TOKEN=xoxb-...`
+   - `SLACK_APP_TOKEN=xapp-...`
+   - `SLACK_ALLOWED_CHANNELS=C01234567,C07654321`
+5. Start the listener:
+
+```bash
+make slack
+```
+
+Then upload a folder's worth of assets as files in the allowed channel:
+
+- one video file such as `.mp4`
+- optional audio sidecar such as `.m4a`
+- optional `.vtt`
+
+If you want to override title, checklist, CTA, or repo name from Slack, put it in the message text. Two supported formats:
+
+```text
+title: How To Use Claude In 15 Minutes
+headline: Build live inside Claude in one short walkthrough
+subheadline: Cover Claude Chat, Claude Cowork, and Claude Code in one pass.
+repo_name: claude-in-15-minutes-lead-magnet
+checklist:
+- Know when to use Claude Chat
+- Know when to use Claude Cowork
+- Know when to use Claude Code
+```
+
+or:
+
+```json
+{
+  "title": "How To Use Claude In 15 Minutes",
+  "headline": "Build live inside Claude in one short walkthrough",
+  "repo_name": "claude-in-15-minutes-lead-magnet",
+  "checklist": [
+    "Know when to use Claude Chat",
+    "Know when to use Claude Cowork",
+    "Know when to use Claude Code"
+  ]
+}
+```
+
+If `SLACK_AUTO_PUBLISH=true`, the listener will also run the GitHub publish step after the build finishes.
+
 ## About automation
 
 If you want "drop a file and it goes," this repo already supports that through the watcher.
 
-If you want "drop it in Slack and it goes," the next step is a Slack app that saves incoming files into `inbox/` and calls the same runner.
+If you want "drop it in Slack and it goes," this repo now supports that with `make slack`.
 
 If you want "upload it in a dashboard and it goes," the next step is a lightweight web app that writes the same job files and calls the same runner.
 

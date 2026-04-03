@@ -1,12 +1,17 @@
 PYTHON ?= python3
 
-.PHONY: help new run watch publish
+.PHONY: help deps new run watch slack publish
 
 help:
+	@echo "make deps"
 	@echo "make new SLUG=example TITLE='My Lead Magnet' SOURCE_VIDEO=/abs/video.mp4 SOURCE_VTT=/abs/transcript.vtt"
 	@echo "make run SLUG=example"
 	@echo "make watch"
+	@echo "make slack"
 	@echo "make publish SLUG=example REPO=example-lead-magnet"
+
+deps:
+	$(PYTHON) -m pip install --user -r requirements.txt
 
 new:
 	$(PYTHON) scripts/new_job.py \
@@ -21,6 +26,9 @@ run:
 
 watch:
 	$(PYTHON) scripts/watch_dropfolder.py
+
+slack:
+	$(PYTHON) scripts/slack_socket_mode.py
 
 publish:
 	$(PYTHON) scripts/publish_job.py "jobs/$(SLUG)" --repo "$(REPO)"

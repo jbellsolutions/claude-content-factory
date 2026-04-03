@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+INBOX = ROOT / "inbox"
+JOBS = ROOT / "jobs"
+
+VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
+AUDIO_EXTS = {".m4a", ".mp3", ".wav"}
+DEFAULT_CTA = "https://jbellsolutions.github.io/claude-code-ecosystem-certification/"
+
+
+def load_env_config() -> dict[str, str]:
+    config: dict[str, str] = {}
+    for path in (ROOT / ".env", ROOT / "config" / ".env"):
+        if not path.exists():
+            continue
+        for raw_line in path.read_text().splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            config[key.strip()] = value.strip().strip('"').strip("'")
+    return config
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def default_manifest(slug: str, env: dict[str, str] | None = None) -> dict:
+    env = env or {}
+    title = slug.replace("-", " ").title()
+    return {
+        "slug": slug,
+        "title": title,
+        "headline": f"Watch {title} come together from one real source recording.",
+        "subheadline": "This page was generated from the Claude Content Factory pipeline.",
+        "lead": "Review the video, the checklist, and the companion PDF, then send people to the full certification if they want the deeper path.",
+        "cta_url": env.get("DEFAULT_CTA_URL", DEFAULT_CTA),
+        "cta_label": "Take the full level one certification here for free",
+        "pdf_title": f"{title} Companion Guide",
+        "kit_form_action": env.get("KIT_FORM_ACTION", ""),
+        "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
+        "kit_tag": env.get("KIT_TAG", ""),
+        "checklist": [
+            "Main lesson one",
+            "Main lesson two",
+            "Main lesson three"
+        ],
+        "manual_segments": []
+    }
+
+
+def locate_inputs(folder: Path) -> tuple[Path | None, Path | None, Path | None]:
+    video = audio = vtt = None
+    for path in sorted(folder.iterdir()):
+        if path.suffix.lower() in VIDEO_EXTS and video is None:
+            video = path
+        elif path.suffix.lower() in AUDIO_EXTS and audio is None:
+            audio = path
+        elif path.suffix.lower() == ".vtt" and vtt is None:
+            vtt = path
+    return video, audio, vtt
+
+
+def create_job_from_folder(folder: Path) -> Path:
+    env = load_env_config()
+    slug = slugify(folder.name)
+    job_dir = JOBS / slug
+    if job_dir.exists():
+        return job_dir
+
+    brief_path = folder / "brief.json"
+    manifest = default_manifest(slug, env)
+    if brief_path.exists():
+        manifest.update(json.loads(brief_path.read_text()))
+
+    input_dir = job_dir / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "output").mkdir(parents=True, exist_ok=True)
+
+    video, audio, vtt = locate_inputs(folder)
+    if video:
+        dest = input_dir / ("source" + video.suffix.lower())
+        shutil.copy2(video, dest)
+        manifest["source_video"] = str(dest.relative_to(job_dir))
+    if audio:
+        dest = input_dir / ("source" + audio.suffix.lower())
+        shutil.copy2(audio, dest)
+        manifest["source_audio"] = str(dest.relative_to(job_dir))
+    if vtt:
+        dest = input_dir / "source.vtt"
+        shutil.copy2(vtt, dest)
+        manifest["source_vtt"] = str(dest.relative_to(job_dir))
+
+    (job_dir / "job.json").write_text(json.dumps(manifest, indent=2))
+    return job_dir
+
+
+def run_job(job_dir: Path) -> None:
+    subprocess.run(["python3", str(ROOT / "scripts" / "run_job.py"), str(job_dir)], check=True)
