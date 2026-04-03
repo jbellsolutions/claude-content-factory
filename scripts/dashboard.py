@@ -261,7 +261,8 @@ def dashboard_html(message: str = "") -> str:
       .lightbox.active{{display:flex}}
       .lightbox-card{{width:min(560px,calc(100vw - 32px));padding:28px;border-radius:28px;background:rgba(248,239,225,.95);box-shadow:var(--shadow)}}
       .loader{{height:12px;margin-top:18px;border-radius:999px;background:rgba(18,49,62,.1);overflow:hidden}}
-      .loader span{{display:block;height:100%;width:38%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#f7c38a,var(--accent));animation:slide 1.2s linear infinite}}
+      .loader span{{display:block;height:100%;width:12%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#f7c38a,var(--accent));transition:width .2s ease}}
+      .lightbox-status{{margin-top:14px;color:var(--muted);font-weight:700}}
       @keyframes slide{{0%{{transform:translateX(-120%)}}100%{{transform:translateX(320%)}}}}
       @media (max-width:980px){{.panel{{grid-template-columns:1fr}}.form-grid{{grid-template-columns:1fr}}}}
     </style>
@@ -333,13 +334,16 @@ def dashboard_html(message: str = "") -> str:
         <p class="eyebrow">Processing</p>
         <h2>Uploading and queueing your run.</h2>
         <p class="muted">Keep this page open. You’ll land on the run workspace next, where status will keep updating until the build finishes.</p>
-        <div class="loader"><span></span></div>
+        <div class="loader"><span id="upload-progress-fill"></span></div>
+        <p class="lightbox-status" id="upload-progress-text">Starting upload...</p>
       </div>
     </div>
     <script>
       (() => {{
         const form = document.getElementById('upload-form');
         const lightbox = document.getElementById('submit-lightbox');
+        const progressFill = document.getElementById('upload-progress-fill');
+        const progressText = document.getElementById('upload-progress-text');
         const tabs = Array.from(document.querySelectorAll('[data-tab]'));
         const sections = {{
           create: document.getElementById('tab-create'),
@@ -363,7 +367,8 @@ def dashboard_html(message: str = "") -> str:
           }});
         }});
         if (!form || !lightbox) return;
-        form.addEventListener('submit', () => {{
+        form.addEventListener('submit', (event) => {{
+          event.preventDefault();
           lightbox.classList.add('active');
           lightbox.setAttribute('aria-hidden', 'false');
           const button = form.querySelector('button[type="submit"]');
@@ -371,6 +376,43 @@ def dashboard_html(message: str = "") -> str:
             button.disabled = true;
             button.textContent = 'Submitting...';
           }}
+          if (progressFill) progressFill.style.width = '8%';
+          if (progressText) progressText.textContent = 'Uploading source files...';
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', form.action, true);
+          xhr.upload.addEventListener('progress', (progressEvent) => {{
+            if (!progressEvent.lengthComputable) return;
+            const ratio = Math.max(8, Math.min(92, Math.round((progressEvent.loaded / progressEvent.total) * 92)));
+            if (progressFill) progressFill.style.width = ratio + '%';
+            if (progressText) progressText.textContent = 'Uploading source files... ' + ratio + '%';
+          }});
+          xhr.addEventListener('load', () => {{
+            if (progressFill) progressFill.style.width = '100%';
+            if (xhr.status >= 200 && xhr.status < 400) {{
+              if (progressText) progressText.textContent = 'Upload complete. Opening your run...';
+              window.location.href = xhr.responseURL || '/#runs';
+              return;
+            }}
+            if (progressText) progressText.textContent = 'Upload failed. Please try again.';
+            lightbox.classList.remove('active');
+            lightbox.setAttribute('aria-hidden', 'true');
+            if (button) {{
+              button.disabled = false;
+              button.textContent = 'Create Job';
+            }}
+            alert('Upload failed with status ' + xhr.status + '.');
+          }});
+          xhr.addEventListener('error', () => {{
+            if (progressText) progressText.textContent = 'Upload failed. Please try again.';
+            lightbox.classList.remove('active');
+            lightbox.setAttribute('aria-hidden', 'true');
+            if (button) {{
+              button.disabled = false;
+              button.textContent = 'Create Job';
+            }}
+            alert('Upload failed due to a network or server error.');
+          }});
+          xhr.send(new FormData(form));
         }});
       }})();
     </script>
@@ -734,6 +776,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self) -> None:
