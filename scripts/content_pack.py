@@ -51,7 +51,12 @@ def extract_json_object(text: str) -> dict:
     end = candidate.rfind("}")
     if start == -1 or end == -1 or end <= start:
         raise ValueError("No JSON object found in model output")
-    return json.loads(candidate[start : end + 1])
+    raw = candidate[start : end + 1]
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        cleaned = re.sub(r",(\s*[}\]])", r"\1", raw)
+        return json.loads(cleaned)
 
 
 def call_openai(prompt: str, system_prompt: str, model: str, api_key: str, base_url: str) -> str:
@@ -202,8 +207,11 @@ def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
         {trimmed_transcript(transcript_text)}
         """
     ).strip()
-    response_text = call_openai(prompt, authority_system_prompt(load_dna()), model, api_key, base_url)
-    payload = extract_json_object(response_text)
+    try:
+        response_text = call_openai(prompt, authority_system_prompt(load_dna()), model, api_key, base_url)
+        payload = extract_json_object(response_text)
+    except Exception:
+        return manifest
     updated = dict(manifest)
     for field in fields_to_fill:
         if field not in payload:
@@ -217,7 +225,7 @@ def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
         elif isinstance(value, str):
             cleaned = value.strip()
             if cleaned:
-                updated[field] = cleaned
+                updated[field] = cleaned.replace("Co-Work", "Cowork").replace("co-work", "cowork")
     return updated
 
 
