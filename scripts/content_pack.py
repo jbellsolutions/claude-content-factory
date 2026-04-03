@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import textwrap
 import urllib.error
 import urllib.request
@@ -41,6 +42,16 @@ def write_readme(output_dir: Path, manifest: dict, generated_files: list[str], n
             ]
         )
     )
+
+
+def extract_json_object(text: str) -> dict:
+    fenced = re.search(r"```json\s*(\{.*\})\s*```", text, flags=re.S)
+    candidate = fenced.group(1) if fenced else text
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found in model output")
+    return json.loads(candidate[start : end + 1])
 
 
 def call_openai(prompt: str, system_prompt: str, model: str, api_key: str, base_url: str) -> str:
@@ -146,6 +157,68 @@ def generate_brief(transcript_text: str, manifest: dict, dna: dict, api_key: str
         """
     ).strip()
     return call_openai(prompt, authority_system_prompt(dna), model, api_key, base_url)
+
+
+def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
+    requested_fields = set(manifest.get("auto_fill_fields", []))
+    if not transcript_text.strip():
+        return manifest
+
+    missing_by_value = {
+        field
+        for field in ["title", "headline", "subheadline", "lead", "checklist", "target_audience", "brand_name"]
+        if not manifest.get(field)
+    }
+    fields_to_fill = sorted(requested_fields | missing_by_value)
+    if not fields_to_fill:
+        return manifest
+
+    env = load_env_config()
+    api_key = env.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return manifest
+
+    model = env.get("OPENAI_MODEL", "gpt-5")
+    base_url = env.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    prompt = textwrap.dedent(
+        f"""
+        Fill the requested page metadata fields from the transcript below.
+
+        Requested fields: {", ".join(fields_to_fill)}
+
+        Requirements:
+        - Return JSON only.
+        - Keep it grounded in the transcript.
+        - Do not use hype or promotional language.
+        - Make the result strong enough for a polished lead magnet page.
+        - `checklist` must be an array of 4 to 7 concise bullets.
+        - If `brand_name` is not obvious from the transcript, return an empty string for it.
+        - If `target_audience` is not obvious, infer the most likely serious audience from the transcript.
+
+        Current manifest context:
+        {json.dumps({k: manifest.get(k) for k in ['title', 'headline', 'subheadline', 'lead', 'brand_name', 'target_audience']}, indent=2)}
+
+        Transcript:
+        {trimmed_transcript(transcript_text)}
+        """
+    ).strip()
+    response_text = call_openai(prompt, authority_system_prompt(load_dna()), model, api_key, base_url)
+    payload = extract_json_object(response_text)
+    updated = dict(manifest)
+    for field in fields_to_fill:
+        if field not in payload:
+            continue
+        value = payload[field]
+        if field == "checklist":
+            if isinstance(value, list):
+                cleaned = [str(item).strip() for item in value if str(item).strip()]
+                if cleaned:
+                    updated[field] = cleaned
+        elif isinstance(value, str):
+            cleaned = value.strip()
+            if cleaned:
+                updated[field] = cleaned
+    return updated
 
 
 def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict) -> str:

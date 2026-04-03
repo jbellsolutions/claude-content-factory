@@ -85,6 +85,25 @@ def all_jobs() -> list[dict]:
     return items
 
 
+def job_record(slug: str) -> dict:
+    state = load_state().get("jobs", {}).get(slug, {})
+    job_dir = JOBS / slug
+    manifest_path = job_dir / "job.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    output_dir = job_dir / "output"
+    return {
+        "slug": slug,
+        "title": manifest.get("title", slug.replace("-", " ").title()),
+        "status": state.get("status", "unknown"),
+        "updated_at": state.get("updated_at", ""),
+        "site_url": state.get("site_url", ""),
+        "repo_name": state.get("repo_name", ""),
+        "error": state.get("error", ""),
+        "has_output": (output_dir / "index.html").exists(),
+        "has_content_pack": (output_dir / "content_pack" / "README.md").exists(),
+    }
+
+
 def infer_output_url(slug: str) -> str:
     return f"/preview/{slug}/index.html"
 
@@ -218,6 +237,12 @@ def dashboard_html(message: str = "") -> str:
       .error{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(141,47,47,.08);color:var(--red);white-space:pre-wrap}}
       .tips{{padding:22px;border-radius:26px;background:linear-gradient(180deg,rgba(8,23,33,.98),rgba(14,36,48,.92));color:#f8efe1}}
       .tips p,.tips li{{color:rgba(248,239,225,.84);line-height:1.6}} .tips ul{{margin:16px 0 0;padding-left:20px}}
+      .lightbox{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,23,33,.68);backdrop-filter:blur(8px);z-index:1000}}
+      .lightbox.active{{display:flex}}
+      .lightbox-card{{width:min(560px,calc(100vw - 32px));padding:28px;border-radius:28px;background:rgba(248,239,225,.95);box-shadow:var(--shadow)}}
+      .loader{{height:12px;margin-top:18px;border-radius:999px;background:rgba(18,49,62,.1);overflow:hidden}}
+      .loader span{{display:block;height:100%;width:38%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#f7c38a,var(--accent));animation:slide 1.2s linear infinite}}
+      @keyframes slide{{0%{{transform:translateX(-120%)}}100%{{transform:translateX(320%)}}}}
       @media (max-width:980px){{.panel{{grid-template-columns:1fr}}.form-grid{{grid-template-columns:1fr}}}}
     </style>
   </head>
@@ -235,22 +260,23 @@ def dashboard_html(message: str = "") -> str:
         <div>
           <p class="eyebrow">New Job</p>
           <h2>Drop in a video and run the pipeline.</h2>
-          <form method="post" action="/upload" enctype="multipart/form-data">
+          <form method="post" action="/upload" enctype="multipart/form-data" id="upload-form">
             <div class="form-grid">
-              <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" placeholder="How To Use Claude In 15 Minutes" required /></div>
+              <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" placeholder="Leave blank to infer from transcript" /></div>
               <div class="field"><label for="repo_name">Repo Name</label><input id="repo_name" type="text" name="repo_name" placeholder="claude-in-15-minutes-lead-magnet" /></div>
-              <div class="field-full"><label for="headline">Headline</label><input id="headline" type="text" name="headline" placeholder="Build live inside Claude in one short walkthrough" /></div>
-              <div class="field-full"><label for="subheadline">Subheadline</label><input id="subheadline" type="text" name="subheadline" placeholder="Cover Claude Chat, Claude Cowork, and Claude Code in one pass." /></div>
-              <div class="field-full"><label for="lead">Lead</label><textarea id="lead" name="lead" placeholder="Short lead paragraph for the page."></textarea></div>
-              <div class="field-full"><label for="checklist">Checklist</label><textarea id="checklist" name="checklist" placeholder="One item per line"></textarea></div>
+              <div class="field-full"><label for="headline">Headline</label><input id="headline" type="text" name="headline" placeholder="Leave blank to infer from transcript" /></div>
+              <div class="field-full"><label for="subheadline">Subheadline</label><input id="subheadline" type="text" name="subheadline" placeholder="Leave blank to infer from transcript" /></div>
+              <div class="field-full"><label for="lead">Lead</label><textarea id="lead" name="lead" placeholder="Leave blank to infer from transcript"></textarea></div>
+              <div class="field-full"><label for="checklist">Checklist</label><textarea id="checklist" name="checklist" placeholder="One item per line, or leave blank to infer from transcript"></textarea></div>
               <div class="field"><label for="cta_url">CTA URL</label><input id="cta_url" type="url" name="cta_url" value="{default_cta}" /></div>
               <div class="field"><label for="cta_label">CTA Label</label><input id="cta_label" type="text" name="cta_label" value="Take the full level one certification here for free" /></div>
-              <div class="field"><label for="brand_name">Brand Name</label><input id="brand_name" type="text" name="brand_name" placeholder="JBell / Claude Content Factory" /></div>
-              <div class="field"><label for="target_audience">Target Audience</label><input id="target_audience" type="text" name="target_audience" value="Founders, executives, operators, and employees leveling up with AI" /></div>
+              <div class="field"><label for="brand_name">Brand Name</label><input id="brand_name" type="text" name="brand_name" placeholder="Optional. Can be inferred from transcript" /></div>
+              <div class="field"><label for="target_audience">Target Audience</label><input id="target_audience" type="text" name="target_audience" placeholder="Optional. Can be inferred from transcript" /></div>
               <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Authority content. Useful, specific, not salesy, not promotional."></textarea></div>
               <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" required /></div>
               <div class="field"><label for="audio">Optional Audio</label><input id="audio" type="file" name="source_audio" accept=".m4a,.mp3,.wav" /></div>
               <div class="field"><label for="vtt">Optional VTT</label><input id="vtt" type="file" name="source_vtt" accept=".vtt" /></div>
+              <div class="field"><label for="txt">Optional Transcript Text</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
             </div>
             <label class="checkline"><input type="checkbox" name="publish_now" value="1" /> Publish to GitHub after build</label>
             <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, newsletter, and YouTube-ready content</label>
@@ -276,12 +302,43 @@ def dashboard_html(message: str = "") -> str:
         </div>
       </section>
     </div>
+    <div class="lightbox" id="submit-lightbox" aria-hidden="true">
+      <div class="lightbox-card">
+        <p class="eyebrow">Processing</p>
+        <h2>Uploading and queueing your run.</h2>
+        <p class="muted">Keep this page open. You’ll land on the run workspace next, where status will keep updating until the build finishes.</p>
+        <div class="loader"><span></span></div>
+      </div>
+    </div>
+    <script>
+      (() => {{
+        const form = document.getElementById('upload-form');
+        const lightbox = document.getElementById('submit-lightbox');
+        if (!form || !lightbox) return;
+        form.addEventListener('submit', () => {{
+          lightbox.classList.add('active');
+          lightbox.setAttribute('aria-hidden', 'false');
+          const button = form.querySelector('button[type="submit"]');
+          if (button) {{
+            button.disabled = true;
+            button.textContent = 'Submitting...';
+          }}
+        }});
+      }})();
+    </script>
   </body>
 </html>"""
 
 
 def manifest_from_form(form: cgi.FieldStorage) -> dict:
     checklist = [line.strip() for line in form.getfirst("checklist", "").splitlines() if line.strip()]
+    auto_fill_fields = [
+        field
+        for field in ["title", "headline", "subheadline", "lead", "brand_name", "target_audience"]
+        if not form.getfirst(field, "").strip()
+    ]
+    if not checklist:
+        auto_fill_fields.append("checklist")
     manifest = {
         "title": form.getfirst("title", "").strip(),
         "headline": form.getfirst("headline", "").strip(),
@@ -294,6 +351,7 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
         "voice_notes": form.getfirst("voice_notes", "").strip(),
         "generate_content_pack": form.getfirst("generate_content_pack", "") == "1",
         "checklist": checklist,
+        "auto_fill_fields": auto_fill_fields,
     }
     filtered: dict[str, object] = {}
     for key, value in manifest.items():
@@ -360,6 +418,15 @@ def run_detail_html(slug: str) -> str:
     preview_url = infer_output_url(slug) if (output_dir / "index.html").exists() else ""
     state = load_state().get("jobs", {}).get(slug, {})
     site_url = state.get("site_url", "")
+    status = state.get("status", "unknown")
+    progress_value = {
+        "queued": 14,
+        "running": 58,
+        "publishing": 86,
+        "completed": 100,
+        "published": 100,
+        "failed": 100,
+    }.get(status, 8)
 
     tabs: list[str] = []
     panels: list[str] = []
@@ -425,8 +492,8 @@ def run_detail_html(slug: str) -> str:
       :root{{--surface:rgba(248,239,225,.88);--surface-2:rgba(255,248,239,.68);--ink:#12313e;--muted:#53686e;--line:rgba(18,49,62,.14);--accent:#ea7f3a;--shadow:0 30px 80px rgba(4,20,29,.24)}}
       *{{box-sizing:border-box}} body{{margin:0;font-family:"Avenir Next","Segoe UI",sans-serif;color:var(--ink);background:radial-gradient(circle at top left,rgba(234,127,58,.28),transparent 24%),radial-gradient(circle at top right,rgba(85,131,141,.22),transparent 24%),linear-gradient(180deg,#d2b28d 0%,#173441 42%,#081721 100%);min-height:100vh}}
       .shell{{width:min(1280px,calc(100vw - 28px));margin:0 auto;padding:24px 0 42px}}
-      .topbar,.summary,.run-workspace{{margin-top:24px;border-radius:32px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}}
-      .topbar,.summary,.run-workspace{{padding:24px}}
+      .topbar,.summary,.progress-shell,.run-workspace{{margin-top:24px;border-radius:32px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}}
+      .topbar,.summary,.progress-shell,.run-workspace{{padding:24px}}
       h1,h2{{margin:0;font-family:"New York","Iowan Old Style",Georgia,serif}} h1{{font-size:clamp(2.4rem,5vw,4rem);line-height:.95}} h2{{font-size:clamp(1.6rem,3vw,2.4rem)}}
       p{{margin:0}} .eyebrow{{margin:0 0 8px;text-transform:uppercase;letter-spacing:.08em;font-size:.76rem;font-weight:800;color:var(--accent)}} .muted{{color:var(--muted);line-height:1.65}}
       .topbar-links,.summary-links,.run-tabs{{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}}
@@ -438,6 +505,11 @@ def run_detail_html(slug: str) -> str:
       textarea{{width:100%;min-height:520px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}}
       .meta-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}}
       .meta-card{{padding:16px;border-radius:20px;background:rgba(255,255,255,.48);border:1px solid var(--line)}} .meta-card strong{{display:block;margin-bottom:6px}}
+      .progress-bar{{height:14px;margin-top:18px;border-radius:999px;background:rgba(18,49,62,.1);overflow:hidden}}
+      .progress-fill{{height:100%;width:{progress_value}%;border-radius:999px;background:linear-gradient(90deg,var(--accent),#f7c38a);transition:width .5s ease}}
+      .status-pill{{display:inline-flex;align-items:center;justify-content:center;min-height:36px;padding:0 14px;border-radius:999px;background:rgba(18,49,62,.08);font-weight:800;text-transform:capitalize}}
+      .status-failed{{background:rgba(141,47,47,.12);color:#8d2f2f}}
+      .status-completed,.status-published{{background:rgba(47,116,86,.12);color:#2f7456}}
     </style>
   </head>
   <body>
@@ -451,6 +523,12 @@ def run_detail_html(slug: str) -> str:
           {''.join(asset_links)}
         </div>
       </header>
+      <section class="progress-shell">
+        <p class="eyebrow">Run Status</p>
+        <h2 id="status-title">Current status: <span class="status-pill status-{escape(status)}" id="status-pill">{escape(status)}</span></h2>
+        <p class="muted" id="status-copy">This page updates while the run is in progress. When the build completes, the generated content and assets stay available here.</p>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      </section>
       <section class="summary">
         <p class="eyebrow">Run Summary</p>
         <div class="meta-grid">
@@ -469,6 +547,52 @@ def run_detail_html(slug: str) -> str:
         {transcript_panel}
       </section>
     </div>
+    <script>
+      (() => {{
+        const slug = {json.dumps(slug)};
+        const progressFill = document.getElementById('progress-fill');
+        const statusPill = document.getElementById('status-pill');
+        const statusCopy = document.getElementById('status-copy');
+        const values = {{ queued: 14, running: 58, publishing: 86, completed: 100, published: 100, failed: 100 }};
+        function applyStatus(data) {{
+          const status = data.status || 'unknown';
+          if (progressFill) progressFill.style.width = (values[status] || 8) + '%';
+          if (statusPill) {{
+            statusPill.textContent = status;
+            statusPill.className = 'status-pill status-' + status;
+          }}
+          if (statusCopy) {{
+            if (status === 'failed') {{
+              statusCopy.textContent = 'This run failed. Scroll down for the error details or return to the dashboard.';
+            }} else if (status === 'completed' || status === 'published') {{
+              statusCopy.textContent = 'This run is ready. Your tabs and generated assets are available below.';
+            }} else {{
+              statusCopy.textContent = 'This page updates while the run is in progress. When the build completes, the generated content and assets stay available here.';
+            }}
+          }}
+          if ((status === 'completed' || status === 'published' || status === 'failed') && !window.__reloadedOnce) {{
+            window.__reloadedOnce = true;
+            window.location.reload();
+          }}
+        }}
+        async function poll() {{
+          try {{
+            const response = await fetch('/api/run/' + encodeURIComponent(slug), {{ cache: 'no-store' }});
+            if (!response.ok) return;
+            const data = await response.json();
+            applyStatus(data);
+            if (!['completed', 'published', 'failed'].includes(data.status)) {{
+              window.setTimeout(poll, 3000);
+            }}
+          }} catch (_error) {{
+            window.setTimeout(poll, 5000);
+          }}
+        }}
+        if (!['completed', 'published', 'failed'].includes({json.dumps(status)})) {{
+          window.setTimeout(poll, 1500);
+        }}
+      }})();
+    </script>
   </body>
 </html>"""
 
@@ -531,6 +655,14 @@ def publish_existing_job(slug: str, repo_name: str) -> None:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def send_html(self, html: str, status: int = HTTPStatus.OK) -> None:
         data = html.encode("utf-8")
         self.send_response(status)
@@ -556,6 +688,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             self.send_html(run_detail_html(slug))
+            return
+        if self.path.startswith("/api/run/"):
+            slug = urllib.parse.unquote(self.path.removeprefix("/api/run/")).strip("/")
+            if not slug:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            self.send_json(job_record(slug))
             return
         if self.path.startswith("/preview/"):
             raw = self.path.removeprefix("/preview/")
@@ -617,6 +756,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             save_upload(audio_field, folder / ("source" + Path(audio_field.filename).suffix.lower()))
         if "source_vtt" in form and getattr(form["source_vtt"], "filename", ""):
             save_upload(form["source_vtt"], folder / "source.vtt")
+        if "source_text" in form and getattr(form["source_text"], "filename", ""):
+            save_upload(form["source_text"], folder / "source.txt")
 
         manifest = manifest_from_form(form)
         if manifest:
@@ -632,8 +773,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             repo_name=repo_name,
         )
         threading.Thread(target=process_job, args=(folder, slug, repo_name, publish_now), daemon=True).start()
-        message = urllib.parse.quote(f"Queued {title or slug} for processing.")
-        self.redirect(f"/?message={message}")
+        self.redirect(infer_run_url(slug))
 
     def handle_publish(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))

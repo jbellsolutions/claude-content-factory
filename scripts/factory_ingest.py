@@ -12,6 +12,7 @@ from runtime_paths import CODE_ROOT, INBOX, JOBS, ensure_runtime_dirs, env_file_
 
 VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
 AUDIO_EXTS = {".m4a", ".mp3", ".wav"}
+TEXT_EXTS = {".txt"}
 DEFAULT_CTA = "https://jbellsolutions.github.io/claude-code-ecosystem-certification/"
 
 
@@ -63,8 +64,8 @@ def default_manifest(slug: str, env: dict[str, str] | None = None) -> dict:
     }
 
 
-def locate_inputs(folder: Path) -> tuple[Path | None, Path | None, Path | None]:
-    video = audio = vtt = None
+def locate_inputs(folder: Path) -> tuple[Path | None, Path | None, Path | None, Path | None]:
+    video = audio = vtt = text = None
     for path in sorted(folder.iterdir()):
         if path.suffix.lower() in VIDEO_EXTS and video is None:
             video = path
@@ -72,7 +73,9 @@ def locate_inputs(folder: Path) -> tuple[Path | None, Path | None, Path | None]:
             audio = path
         elif path.suffix.lower() == ".vtt" and vtt is None:
             vtt = path
-    return video, audio, vtt
+        elif path.suffix.lower() in TEXT_EXTS and text is None:
+            text = path
+    return video, audio, vtt, text
 
 
 def create_job_from_folder(folder: Path) -> Path:
@@ -92,7 +95,7 @@ def create_job_from_folder(folder: Path) -> Path:
     input_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "output").mkdir(parents=True, exist_ok=True)
 
-    video, audio, vtt = locate_inputs(folder)
+    video, audio, vtt, text = locate_inputs(folder)
     if video:
         dest = input_dir / ("source" + video.suffix.lower())
         shutil.copy2(video, dest)
@@ -105,6 +108,10 @@ def create_job_from_folder(folder: Path) -> Path:
         dest = input_dir / "source.vtt"
         shutil.copy2(vtt, dest)
         manifest["source_vtt"] = str(dest.relative_to(job_dir))
+    if text:
+        dest = input_dir / "source.txt"
+        shutil.copy2(text, dest)
+        manifest["source_text"] = str(dest.relative_to(job_dir))
 
     (job_dir / "job.json").write_text(json.dumps(manifest, indent=2))
     return job_dir

@@ -18,7 +18,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
-from content_pack import generate_content_pack
+from content_pack import generate_content_pack, infer_manifest_fields
 
 ROOT = Path(__file__).resolve().parents[1]
 DISPLAY_FONT = "/System/Library/Fonts/NewYork.ttf"
@@ -55,6 +55,10 @@ class Cue:
 
 def load_manifest(job_dir: Path) -> dict:
     return json.loads((job_dir / "job.json").read_text())
+
+
+def save_manifest(job_dir: Path, manifest: dict) -> None:
+    (job_dir / "job.json").write_text(json.dumps(manifest, indent=2))
 
 
 def to_seconds(timestamp: str) -> float:
@@ -492,6 +496,7 @@ def build_job(job_dir: Path) -> None:
     cues: list[Cue] = []
     segments: list[list[float]] = []
     has_captions = False
+    transcript_path = None
     if manifest.get("source_vtt"):
         cues = cleaned_cues_from_vtt(job_dir / manifest["source_vtt"])
         if manifest.get("manual_segments"):
@@ -501,8 +506,15 @@ def build_job(job_dir: Path) -> None:
         selected = selected_cues(cues, segments) if segments else cues
         transcript_path, _ = write_transcript_outputs(job_dir, selected)
         has_captions = True
-    else:
-        transcript_path = None
+    elif manifest.get("source_text"):
+        transcript_dir = output_dir / "transcripts"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = transcript_dir / "transcript.txt"
+        transcript_path.write_text((job_dir / manifest["source_text"]).read_text().strip())
+
+    if transcript_path and transcript_path.exists():
+        manifest = infer_manifest_fields(manifest, transcript_path.read_text())
+        save_manifest(job_dir, manifest)
     render_brand_assets(job_dir, manifest)
     render_video(job_dir, manifest, segments)
     render_pdf(job_dir, manifest)

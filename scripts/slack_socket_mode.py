@@ -16,7 +16,7 @@ from factory_ingest import INBOX, create_job_from_folder, load_env_config, run_j
 from runtime_paths import CODE_ROOT, DATA_ROOT, ensure_runtime_dirs
 
 STATE_FILE = DATA_ROOT / ".slack_state.json"
-SUPPORTED_EXTS = {".mp4", ".mov", ".m4v", ".m4a", ".mp3", ".wav", ".vtt"}
+SUPPORTED_EXTS = {".mp4", ".mov", ".m4v", ".m4a", ".mp3", ".wav", ".vtt", ".txt"}
 
 
 def load_state() -> dict:
@@ -93,6 +93,8 @@ def pick_filename(file_info: dict) -> str | None:
         return None
     if suffix == ".vtt":
         return "source.vtt"
+    if suffix == ".txt":
+        return "source.txt"
     if suffix in {".mp4", ".mov", ".m4v"}:
         return "source" + suffix
     return "source" + suffix
