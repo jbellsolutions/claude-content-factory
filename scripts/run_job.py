@@ -12,6 +12,7 @@ from pathlib import Path
 
 import imageio_ffmpeg
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import reportlab
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -21,9 +22,22 @@ from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTempl
 from content_pack import generate_content_pack, infer_manifest_fields
 
 ROOT = Path(__file__).resolve().parents[1]
-DISPLAY_FONT = "/System/Library/Fonts/NewYork.ttf"
-DISPLAY_BOLD = "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
-SANS_FONT = "/System/Library/Fonts/Avenir Next.ttc"
+REPORTLAB_FONTS = Path(reportlab.__file__).resolve().parent / "fonts"
+DISPLAY_FONT_CANDIDATES = [
+    "/System/Library/Fonts/NewYork.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    str(REPORTLAB_FONTS / "Vera.ttf"),
+]
+DISPLAY_BOLD_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/Georgia Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    str(REPORTLAB_FONTS / "VeraBd.ttf"),
+]
+SANS_FONT_CANDIDATES = [
+    "/System/Library/Fonts/Avenir Next.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    str(REPORTLAB_FONTS / "Vera.ttf"),
+]
 
 REPLACEMENTS = {
     "Quad Code": "Claude Code",
@@ -77,8 +91,14 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
 
 
-def font(path: str, size: int) -> ImageFont.FreeTypeFont:
-    return ImageFont.truetype(path, size=size)
+def font(paths: str | list[str], size: int) -> ImageFont.FreeTypeFont:
+    candidates = [paths] if isinstance(paths, str) else paths
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default(size=size)
 
 
 def wrap(text: str, width: int) -> str:
