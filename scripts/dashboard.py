@@ -173,6 +173,14 @@ def dashboard_html(message: str = "") -> str:
           <button type="submit" class="danger-button">Delete</button>
         </form>
         """
+        rerun_form = ""
+        if (JOBS / slug / "job.json").exists():
+            rerun_form = f"""
+            <form class="inline-form" method="post" action="/rerun">
+              <input type="hidden" name="slug" value="{slug}" />
+              <button type="submit">Rerun</button>
+            </form>
+            """
         if job.get("has_output") and status not in {"publishing", "published"}:
             publish_form = f"""
             <form class="inline-form" method="post" action="/publish">
@@ -199,6 +207,7 @@ def dashboard_html(message: str = "") -> str:
                 {preview_link}
                 {content_link}
                 {live_link}
+                {rerun_form}
                 {publish_form}
                 {delete_form}
               </div>
@@ -612,6 +621,10 @@ def run_detail_html(slug: str) -> str:
         <div class="topbar-links">
           <a class="ghost" href="/">Back To Dashboard</a>
           {''.join(asset_links)}
+          <form method="post" action="/rerun">
+            <input type="hidden" name="slug" value="{escape(slug)}" />
+            <button type="submit" class="ghost">Rerun Job</button>
+          </form>
           <form method="post" action="/delete" onsubmit="return confirm('Delete this run from the dashboard and local storage?');">
             <input type="hidden" name="slug" value="{escape(slug)}" />
             <button type="submit" class="danger-button">Delete Run</button>
@@ -724,6 +737,25 @@ def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> N
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 
 
+def rerun_existing_job(slug: str) -> None:
+    state = job_record(slug)
+    update_job_state(slug, status="running", error="", preview_url=infer_output_url(slug))
+    try:
+        job_dir = JOBS / slug
+        if not (job_dir / "job.json").exists():
+            raise FileNotFoundError(f"Missing job.json for {slug}")
+        run_job(job_dir)
+        update_job_state(
+            slug,
+            status="completed",
+            has_output=True,
+            repo_name=state.get("repo_name", "") or slug,
+            site_url=state.get("site_url", ""),
+        )
+    except Exception:
+        update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
+
+
 def publish_existing_job(slug: str, repo_name: str) -> None:
     update_job_state(slug, status="publishing", error="")
     try:
@@ -831,6 +863,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/publish":
             self.handle_publish()
             return
+        if self.path == "/rerun":
+            self.handle_rerun()
+            return
         if self.path == "/delete":
             self.handle_delete()
             return
@@ -892,6 +927,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         threading.Thread(target=publish_existing_job, args=(slug, repo_name), daemon=True).start()
         message = urllib.parse.quote(f"Publishing {slug} to GitHub.")
         self.redirect(f"/?message={message}")
+
+    def handle_rerun(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        slug = payload.get("slug", [""])[0].strip()
+        if not slug:
+            self.send_html(dashboard_html("Missing job slug."), status=HTTPStatus.BAD_REQUEST)
+            return
+        if not (JOBS / slug / "job.json").exists():
+            self.send_html(dashboard_html(f"Could not find {slug}."), status=HTTPStatus.NOT_FOUND)
+            return
+        threading.Thread(target=rerun_existing_job, args=(slug,), daemon=True).start()
+        self.redirect(infer_run_url(slug))
 
     def handle_delete(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
