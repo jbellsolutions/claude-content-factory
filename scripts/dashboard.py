@@ -108,6 +108,7 @@ def job_record(slug: str) -> dict:
         "site_url": state.get("site_url", ""),
         "repo_name": state.get("repo_name", ""),
         "error": state.get("error", ""),
+        "publish_error": state.get("publish_error", ""),
         "has_output": (output_dir / "index.html").exists(),
         "has_content_pack": (output_dir / "content_pack" / "README.md").exists(),
     }
@@ -188,6 +189,7 @@ def dashboard_html(message: str = "") -> str:
         repo_name = job.get("repo_name", "")
         site_url = job.get("site_url", "")
         error = job.get("error", "")
+        publish_error = job.get("publish_error", "")
         preview = infer_output_url(slug) if job.get("has_output") else ""
         run_url = infer_run_url(slug)
         run_link = f'<a class="ghost" href="{run_url}">Open Run</a>'
@@ -227,6 +229,7 @@ def dashboard_html(message: str = "") -> str:
             </form>
             """
         error_block = f'<p class="error">{error}</p>' if error else ""
+        publish_warning_block = f'<p class="warning"><strong>Publish warning:</strong>\n{publish_error}</p>' if publish_error else ""
         rows.append(
             f"""
             <article class="job-card">
@@ -250,6 +253,7 @@ def dashboard_html(message: str = "") -> str:
                 {delete_form}
               </div>
               {error_block}
+              {publish_warning_block}
             </article>
             """
         )
@@ -302,6 +306,7 @@ def dashboard_html(message: str = "") -> str:
       .delete-form{{display:inline-flex}} .danger-button{{background:rgba(141,47,47,.12);color:var(--red);border:1px solid rgba(141,47,47,.18)}}
       .empty{{margin-top:18px;color:var(--muted)}}
       .error{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(141,47,47,.08);color:var(--red);white-space:pre-wrap}}
+      .warning{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(234,127,58,.12);color:#8f4d18;white-space:pre-wrap}}
       .tips{{padding:22px;border-radius:26px;background:linear-gradient(180deg,rgba(8,23,33,.98),rgba(14,36,48,.92));color:#f8efe1}}
       .tips p,.tips li{{color:rgba(248,239,225,.84);line-height:1.6}} .tips ul{{margin:16px 0 0;padding-left:20px}}
       .lightbox{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,23,33,.68);backdrop-filter:blur(8px);z-index:1000}}
@@ -606,6 +611,8 @@ def run_detail_html(slug: str) -> str:
     state = load_state().get("jobs", {}).get(slug, {})
     site_url = state.get("site_url", "")
     status = state.get("status", "unknown")
+    error_text = state.get("error", "")
+    publish_error = state.get("publish_error", "")
     progress_value = {
         "queued": 14,
         "running": 58,
@@ -713,6 +720,9 @@ def run_detail_html(slug: str) -> str:
       .status-failed{{background:rgba(141,47,47,.12);color:#8d2f2f}}
       .status-completed,.status-published{{background:rgba(47,116,86,.12);color:#2f7456}}
       .danger-button{{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:rgba(141,47,47,.12);color:#8d2f2f;border:1px solid rgba(141,47,47,.18);font-weight:800;cursor:pointer}}
+      .message-block{{margin-top:18px;padding:14px 16px;border-radius:18px;white-space:pre-wrap;line-height:1.55}}
+      .message-error{{background:rgba(141,47,47,.08);color:#8d2f2f}}
+      .message-warning{{background:rgba(234,127,58,.12);color:#8f4d18}}
     </style>
   </head>
   <body>
@@ -743,6 +753,8 @@ def run_detail_html(slug: str) -> str:
         <h2 id="status-title">Current status: <span class="status-pill status-{escape(status)}" id="status-pill">{escape(status)}</span></h2>
         <p class="muted" id="status-copy">This page updates while the run is in progress. When the build completes, the generated content and assets stay available here.</p>
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        {'<div class="message-block message-warning" id="publish-warning">' + escape(publish_error) + '</div>' if publish_error else ''}
+        {'<div class="message-block message-error" id="run-error">' + escape(error_text) + '</div>' if error_text else ''}
       </section>
       <section class="summary">
         <p class="eyebrow">Run Summary</p>
@@ -829,40 +841,47 @@ def run_detail_html(slug: str) -> str:
 
 
 def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> None:
-    update_job_state(slug, status="running", error="")
+    update_job_state(slug, status="running", error="", publish_error="")
     try:
         job_dir = create_job_from_folder(folder)
         update_job_state(slug, job_dir=str(job_dir), preview_url=infer_output_url(slug))
         run_job(job_dir)
-        update_job_state(slug, status="completed", has_output=True)
+        update_job_state(slug, status="completed", has_output=True, repo_name=repo_name or slug, publish_error="")
         if publish_now:
             update_job_state(slug, status="publishing")
             visibility = load_env_config().get("DEFAULT_REPO_VISIBILITY", "public")
-            result = subprocess.run(
-                [
-                    "python3",
-                    str(ROOT / "scripts" / "publish_job.py"),
-                    str(job_dir),
-                    "--repo",
-                    repo_name or slug,
-                    "--visibility",
-                    visibility,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            site_url = result.stdout.strip().splitlines()[-1]
-            update_job_state(slug, status="published", repo_name=repo_name or slug, site_url=site_url)
-        else:
-            update_job_state(slug, repo_name=repo_name or slug)
+            try:
+                result = subprocess.run(
+                    [
+                        "python3",
+                        str(ROOT / "scripts" / "publish_job.py"),
+                        str(job_dir),
+                        "--repo",
+                        repo_name or slug,
+                        "--visibility",
+                        visibility,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                site_url = result.stdout.strip().splitlines()[-1]
+                update_job_state(slug, status="published", repo_name=repo_name or slug, site_url=site_url, publish_error="")
+            except subprocess.CalledProcessError as exc:
+                update_job_state(
+                    slug,
+                    status="completed",
+                    has_output=True,
+                    repo_name=repo_name or slug,
+                    publish_error=format_subprocess_error(exc),
+                )
     except Exception:
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 
 
 def rerun_existing_job(slug: str) -> None:
     state = job_record(slug)
-    update_job_state(slug, status="running", error="", preview_url=infer_output_url(slug))
+    update_job_state(slug, status="running", error="", publish_error="", preview_url=infer_output_url(slug))
     try:
         job_dir = JOBS / slug
         if not (job_dir / "job.json").exists():
@@ -899,7 +918,7 @@ def autopost_existing_job(slug: str) -> None:
 
 
 def publish_existing_job(slug: str, repo_name: str) -> None:
-    update_job_state(slug, status="publishing", error="")
+    update_job_state(slug, status="publishing", error="", publish_error="")
     try:
         job_dir = JOBS / slug
         visibility = load_env_config().get("DEFAULT_REPO_VISIBILITY", "public")
@@ -918,9 +937,10 @@ def publish_existing_job(slug: str, repo_name: str) -> None:
             text=True,
         )
         site_url = result.stdout.strip().splitlines()[-1]
-        update_job_state(slug, status="published", repo_name=repo_name, site_url=site_url)
+        update_job_state(slug, status="published", repo_name=repo_name, site_url=site_url, publish_error="")
     except subprocess.CalledProcessError as exc:
-        update_job_state(slug, status="failed", error=format_subprocess_error(exc))
+        fallback_status = "completed" if (JOBS / slug / "output" / "index.html").exists() else "failed"
+        update_job_state(slug, status=fallback_status, publish_error=format_subprocess_error(exc))
     except Exception:
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 

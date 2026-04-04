@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import json
 import math
+import mimetypes
 import re
 import shutil
 import subprocess
 import textwrap
+import uuid
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -230,6 +233,146 @@ def write_transcript_outputs(job_dir: Path, cues: list[Cue]) -> tuple[Path, Path
         lines.extend([str(index), f"{to_vtt_timestamp(cue.start)} --> {to_vtt_timestamp(cue.end)}", cue.text, ""])
     vtt_path.write_text("\n".join(lines))
     return txt_path, vtt_path
+
+
+def prepare_audio_for_transcription(ffmpeg: str, media_path: Path, output_path: Path) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(media_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-b:a",
+            "32k",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
+def segment_audio_for_transcription(ffmpeg: str, audio_path: Path, chunk_dir: Path, segment_seconds: int = 1200) -> list[Path]:
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(audio_path),
+            "-f",
+            "segment",
+            "-segment_time",
+            str(segment_seconds),
+            "-c",
+            "copy",
+            str(chunk_dir / "chunk-%03d.mp3"),
+        ]
+    )
+    return sorted(path for path in chunk_dir.glob("chunk-*.mp3") if path.stat().st_size > 0)
+
+
+def encode_multipart_form(fields: dict[str, str], file_field: str, file_path: Path) -> tuple[bytes, str]:
+    boundary = f"----CodexBoundary{uuid.uuid4().hex}"
+    line_break = b"\r\n"
+    body = bytearray()
+    for key, value in fields.items():
+        body.extend(f"--{boundary}".encode("utf-8"))
+        body.extend(line_break)
+        body.extend(f'Content-Disposition: form-data; name="{key}"'.encode("utf-8"))
+        body.extend(line_break)
+        body.extend(line_break)
+        body.extend(str(value).encode("utf-8"))
+        body.extend(line_break)
+    mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    body.extend(f"--{boundary}".encode("utf-8"))
+    body.extend(line_break)
+    body.extend(
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"'.encode("utf-8")
+    )
+    body.extend(line_break)
+    body.extend(f"Content-Type: {mime_type}".encode("utf-8"))
+    body.extend(line_break)
+    body.extend(line_break)
+    body.extend(file_path.read_bytes())
+    body.extend(line_break)
+    body.extend(f"--{boundary}--".encode("utf-8"))
+    body.extend(line_break)
+    return bytes(body), boundary
+
+
+def transcribe_audio_chunk(audio_path: Path, api_key: str, base_url: str, model: str, prompt: str) -> str:
+    fields = {
+        "model": model,
+        "response_format": "text",
+    }
+    if prompt.strip():
+        fields["prompt"] = prompt.strip()
+    payload, boundary = encode_multipart_form(fields, "file", audio_path)
+    request = urllib.request.Request(
+        base_url.rstrip("/") + "/audio/transcriptions",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(payload)),
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=600) as response:
+        text = response.read().decode("utf-8").strip()
+    if text.startswith("{"):
+        try:
+            return json.loads(text).get("text", "").strip()
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+def generate_transcript_from_media(job_dir: Path, manifest: dict, env: dict) -> Path | None:
+    api_key = env.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    source_audio = manifest.get("source_audio")
+    source_video = manifest.get("source_video")
+    if not source_audio and not source_video:
+        return None
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    output_dir = job_dir / "output"
+    transcript_dir = output_dir / "transcripts"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = output_dir / ".tmp_transcription"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    source_media = job_dir / (source_audio or source_video)
+    prepared_audio = prepare_audio_for_transcription(ffmpeg, source_media, temp_dir / "transcription-source.mp3")
+    chunks = segment_audio_for_transcription(ffmpeg, prepared_audio, temp_dir / "chunks")
+    if not chunks and prepared_audio.exists() and prepared_audio.stat().st_size > 0:
+        chunks = [prepared_audio]
+
+    model = env.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe").strip() or "gpt-4o-mini-transcribe"
+    base_url = env.get("OPENAI_BASE_URL", "https://api.openai.com/v1").strip() or "https://api.openai.com/v1"
+    prompt = (
+        "Transcribe this business, AI, and software workflow recording cleanly. "
+        "Prefer Claude Chat, Claude Cowork, Claude Code, Kit, Substack, Medium, LinkedIn, Facebook, YouTube, and ConvertKit spellings when spoken."
+    )
+    transcript_parts: list[str] = []
+    for chunk in chunks:
+        text = transcribe_audio_chunk(chunk, api_key, base_url, model, prompt)
+        cleaned = re.sub(r"\s{2,}", " ", text.replace("\r\n", "\n")).strip()
+        if cleaned:
+            transcript_parts.append(cleaned)
+    if not transcript_parts:
+        return None
+
+    transcript_path = transcript_dir / "transcript.txt"
+    transcript_path.write_text("\n\n".join(transcript_parts).strip())
+    return transcript_path
 
 
 def make_background(width: int, height: int) -> Image.Image:
@@ -546,6 +689,8 @@ def build_job(job_dir: Path) -> None:
         transcript_dir.mkdir(parents=True, exist_ok=True)
         transcript_path = transcript_dir / "transcript.txt"
         transcript_path.write_text((job_dir / manifest["source_text"]).read_text().strip())
+    else:
+        transcript_path = generate_transcript_from_media(job_dir, manifest, env)
 
     if transcript_path and transcript_path.exists():
         manifest = infer_manifest_fields(manifest, transcript_path.read_text())
