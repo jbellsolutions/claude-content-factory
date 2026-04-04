@@ -239,6 +239,7 @@ Current distribution behavior:
 - Kit newsletter posting uses the official Kit API when `KIT_API_KEY` is configured.
 - Browser Use handles browser-driven channels such as Facebook, LinkedIn, Medium, Substack, and optional YouTube Studio upload when `BROWSER_USE_ENABLED=true`.
 - Distribution writes its result payload back to `output/content_pack/distribution-results.json`.
+- `Queue Local Post` adds a completed hosted run to a durable queue so a local Browser Use worker on your Mac can claim and publish it with your logged-in browser session.
 
 Recommended setup for Browser Use:
 
@@ -246,6 +247,20 @@ Recommended setup for Browser Use:
 - enable `BROWSER_USE_ENABLED=true`
 - leave `BROWSER_USE_STORAGE_STATE` blank to use `Browser.from_system_chrome()`, or point it at a saved storage-state file
 - set `BROWSER_USE_OPENAI_MODEL=o3` or another supported Browser Use OpenAI model
+
+Recommended setup for the Railway-to-local posting bridge:
+
+- set `POSTING_WORKER_TOKEN` on Railway and in your local `config/.env`
+- set `POSTING_BRIDGE_URL=https://claude-content-factory-web-production.up.railway.app` in your local `config/.env`
+- run the local worker with:
+
+```bash
+cd /Users/home/claude-content-factory
+make post-worker PYTHON=/Users/home/.browser-use-env/bin/python
+```
+
+- use `Queue Local Post` on the hosted dashboard after a run completes
+- the local worker will claim the approved job, download the generated assets, run the existing posting pipeline locally, and push `distribution-results.json` back into the hosted run
 
 This keeps posting approval explicit while still making the full path from video to published content automatable.
 

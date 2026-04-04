@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: help deps new run watch slack dashboard publish
+.PHONY: help deps new run watch slack dashboard post-worker publish
 
 help:
 	@echo "make deps"
@@ -9,6 +9,7 @@ help:
 	@echo "make watch"
 	@echo "make slack"
 	@echo "make dashboard"
+	@echo "make post-worker PYTHON=/Users/home/.browser-use-env/bin/python"
 	@echo "make publish SLUG=example REPO=example-lead-magnet"
 	@echo "make railway-up"
 
@@ -34,6 +35,9 @@ slack:
 
 dashboard:
 	$(PYTHON) scripts/dashboard.py
+
+post-worker:
+	$(PYTHON) scripts/posting_worker.py
 
 railway-up:
 	railway up

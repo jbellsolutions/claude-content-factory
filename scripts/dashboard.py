@@ -22,7 +22,18 @@ from runtime_paths import CODE_ROOT, DATA_ROOT, ensure_runtime_dirs
 
 ROOT = CODE_ROOT
 STATE_FILE = DATA_ROOT / ".dashboard_state.json"
+QUEUE_FILE = DATA_ROOT / ".posting_queue.json"
 STATE_LOCK = threading.Lock()
+QUEUE_LOCK = threading.Lock()
+DEFAULT_POST_CHANNELS = [
+    "newsletter",
+    "facebook_post",
+    "linkedin_post",
+    "linkedin_article",
+    "medium_article",
+    "substack_post",
+    "youtube_package",
+]
 
 
 def now_iso() -> str:
@@ -40,6 +51,108 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def load_queue() -> dict:
+    if not QUEUE_FILE.exists():
+        return {"jobs": {}}
+    try:
+        return json.loads(QUEUE_FILE.read_text())
+    except json.JSONDecodeError:
+        return {"jobs": {}}
+
+
+def save_queue(queue: dict) -> None:
+    QUEUE_FILE.write_text(json.dumps(queue, indent=2))
+
+
+def queue_record(slug: str) -> dict:
+    return load_queue().get("jobs", {}).get(slug, {})
+
+
+def queue_job_for_local_post(slug: str, requested_channels: list[str] | None = None) -> dict:
+    with QUEUE_LOCK:
+        queue = load_queue()
+        jobs = queue.setdefault("jobs", {})
+        current = jobs.get(slug, {})
+        current.update(
+            {
+                "slug": slug,
+                "status": "pending",
+                "requested_at": now_iso(),
+                "claimed_at": "",
+                "completed_at": "",
+                "worker_id": "",
+                "error": "",
+                "requested_channels": requested_channels or DEFAULT_POST_CHANNELS,
+            }
+        )
+        jobs[slug] = current
+        save_queue(queue)
+        return current
+
+
+def claim_next_queue_item(worker_id: str) -> dict | None:
+    with QUEUE_LOCK:
+        queue = load_queue()
+        jobs = queue.setdefault("jobs", {})
+        pending = [
+            item for item in jobs.values()
+            if item.get("status") == "pending"
+        ]
+        pending.sort(key=lambda item: (item.get("requested_at", ""), item.get("slug", "")))
+        if not pending:
+            return None
+        item = pending[0]
+        slug = item["slug"]
+        item["status"] = "claimed"
+        item["claimed_at"] = now_iso()
+        item["worker_id"] = worker_id
+        item["error"] = ""
+        jobs[slug] = item
+        save_queue(queue)
+        return item
+
+
+def complete_queue_item(slug: str, worker_id: str, results: dict) -> None:
+    with QUEUE_LOCK:
+        queue = load_queue()
+        jobs = queue.setdefault("jobs", {})
+        current = jobs.get(slug, {"slug": slug})
+        current.update(
+            {
+                "status": "completed",
+                "completed_at": now_iso(),
+                "worker_id": worker_id,
+                "error": "",
+                "results": results,
+            }
+        )
+        jobs[slug] = current
+        save_queue(queue)
+    output_path = JOBS / slug / "output" / "content_pack" / "distribution-results.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(results, indent=2))
+    update_job_state(slug, status="autoposted", distribution_summary="Local posting worker completed.", distribution_error="")
+
+
+def fail_queue_item(slug: str, worker_id: str, error: str) -> None:
+    with QUEUE_LOCK:
+        queue = load_queue()
+        jobs = queue.setdefault("jobs", {})
+        current = jobs.get(slug, {"slug": slug})
+        current.update(
+            {
+                "status": "failed",
+                "completed_at": now_iso(),
+                "worker_id": worker_id,
+                "error": error,
+            }
+        )
+        jobs[slug] = current
+        save_queue(queue)
+    fallback_status = "completed" if (JOBS / slug / "output" / "index.html").exists() else "failed"
+    update_job_state(slug, status=fallback_status, distribution_summary="", distribution_error=error)
 
 
 def update_job_state(slug: str, **changes: object) -> None:
@@ -62,6 +175,7 @@ def remove_job_state(slug: str) -> None:
 
 def all_jobs() -> list[dict]:
     state = load_state()
+    queue = load_queue().get("jobs", {})
     items: list[dict] = []
     for slug, record in state.get("jobs", {}).items():
         record = {"slug": slug, **record}
@@ -74,6 +188,8 @@ def all_jobs() -> list[dict]:
             record.setdefault("title", slug.replace("-", " ").title())
         output_dir = job_dir / "output"
         record["has_output"] = output_dir.exists() and (output_dir / "index.html").exists()
+        if slug in queue:
+            record["posting_queue"] = queue[slug]
         items.append(record)
     for manifest_path in sorted(JOBS.glob("*/job.json")):
         slug = manifest_path.parent.name
@@ -88,6 +204,7 @@ def all_jobs() -> list[dict]:
                 "status": "completed" if (output_dir / "index.html").exists() else "unknown",
                 "updated_at": now_iso(),
                 "has_output": (output_dir / "index.html").exists(),
+                "posting_queue": queue.get(slug, {}),
             }
         )
     items.sort(key=lambda item: (item.get("updated_at", ""), item["slug"]), reverse=True)
@@ -96,6 +213,7 @@ def all_jobs() -> list[dict]:
 
 def job_record(slug: str) -> dict:
     state = load_state().get("jobs", {}).get(slug, {})
+    posting_queue = queue_record(slug)
     job_dir = JOBS / slug
     manifest_path = job_dir / "job.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
@@ -109,8 +227,10 @@ def job_record(slug: str) -> dict:
         "repo_name": state.get("repo_name", ""),
         "error": state.get("error", ""),
         "publish_error": state.get("publish_error", ""),
+        "distribution_error": state.get("distribution_error", ""),
         "has_output": (output_dir / "index.html").exists(),
         "has_content_pack": (output_dir / "content_pack" / "README.md").exists(),
+        "posting_queue": posting_queue,
     }
 
 
@@ -190,6 +310,8 @@ def dashboard_html(message: str = "") -> str:
         site_url = job.get("site_url", "")
         error = job.get("error", "")
         publish_error = job.get("publish_error", "")
+        posting_queue = job.get("posting_queue", {})
+        posting_status = posting_queue.get("status", "")
         preview = infer_output_url(slug) if job.get("has_output") else ""
         run_url = infer_run_url(slug)
         run_link = f'<a class="ghost" href="{run_url}">Open Run</a>'
@@ -213,11 +335,18 @@ def dashboard_html(message: str = "") -> str:
             </form>
             """
         autopost_form = ""
+        queue_form = ""
         if job.get("has_output"):
             autopost_form = f"""
             <form class="inline-form" method="post" action="/autopost">
               <input type="hidden" name="slug" value="{slug}" />
               <button type="submit">Approve &amp; Post</button>
+            </form>
+            """
+            queue_form = f"""
+            <form class="inline-form" method="post" action="/queue-post">
+              <input type="hidden" name="slug" value="{slug}" />
+              <button type="submit">Queue Local Post</button>
             </form>
             """
         if job.get("has_output") and status not in {"publishing", "published"}:
@@ -230,6 +359,7 @@ def dashboard_html(message: str = "") -> str:
             """
         error_block = f'<p class="error">{error}</p>' if error else ""
         publish_warning_block = f'<p class="warning"><strong>Publish warning:</strong>\n{publish_error}</p>' if publish_error else ""
+        queue_block = f'<p class="queue-note"><strong>Local posting queue:</strong> {posting_status}</p>' if posting_status else ""
         rows.append(
             f"""
             <article class="job-card">
@@ -249,9 +379,11 @@ def dashboard_html(message: str = "") -> str:
                 {live_link}
                 {rerun_form}
                 {autopost_form}
+                {queue_form}
                 {publish_form}
                 {delete_form}
               </div>
+              {queue_block}
               {error_block}
               {publish_warning_block}
             </article>
@@ -307,6 +439,7 @@ def dashboard_html(message: str = "") -> str:
       .empty{{margin-top:18px;color:var(--muted)}}
       .error{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(141,47,47,.08);color:var(--red);white-space:pre-wrap}}
       .warning{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(234,127,58,.12);color:#8f4d18;white-space:pre-wrap}}
+      .queue-note{{margin-top:14px;padding:12px 14px;border-radius:16px;background:rgba(18,49,62,.06);color:var(--ink)}}
       .tips{{padding:22px;border-radius:26px;background:linear-gradient(180deg,rgba(8,23,33,.98),rgba(14,36,48,.92));color:#f8efe1}}
       .tips p,.tips li{{color:rgba(248,239,225,.84);line-height:1.6}} .tips ul{{margin:16px 0 0;padding-left:20px}}
       .lightbox{{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,23,33,.68);backdrop-filter:blur(8px);z-index:1000}}
@@ -613,6 +746,9 @@ def run_detail_html(slug: str) -> str:
     status = state.get("status", "unknown")
     error_text = state.get("error", "")
     publish_error = state.get("publish_error", "")
+    distribution_error = state.get("distribution_error", "")
+    posting_queue = queue_record(slug)
+    posting_status = posting_queue.get("status", "")
     progress_value = {
         "queued": 14,
         "running": 58,
@@ -738,6 +874,10 @@ def run_detail_html(slug: str) -> str:
             <input type="hidden" name="slug" value="{escape(slug)}" />
             <button type="submit" class="ghost">Approve &amp; Post</button>
           </form>
+          <form method="post" action="/queue-post">
+            <input type="hidden" name="slug" value="{escape(slug)}" />
+            <button type="submit" class="ghost">Queue Local Post</button>
+          </form>
           <form method="post" action="/rerun">
             <input type="hidden" name="slug" value="{escape(slug)}" />
             <button type="submit" class="ghost">Rerun Job</button>
@@ -753,7 +893,9 @@ def run_detail_html(slug: str) -> str:
         <h2 id="status-title">Current status: <span class="status-pill status-{escape(status)}" id="status-pill">{escape(status)}</span></h2>
         <p class="muted" id="status-copy">This page updates while the run is in progress. When the build completes, the generated content and assets stay available here.</p>
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        {'<div class="message-block message-warning" id="posting-queue">Local posting queue: ' + escape(posting_status) + '</div>' if posting_status else ''}
         {'<div class="message-block message-warning" id="publish-warning">' + escape(publish_error) + '</div>' if publish_error else ''}
+        {'<div class="message-block message-warning" id="distribution-warning">' + escape(distribution_error) + '</div>' if distribution_error else ''}
         {'<div class="message-block message-error" id="run-error">' + escape(error_text) + '</div>' if error_text else ''}
       </section>
       <section class="summary">
@@ -841,7 +983,7 @@ def run_detail_html(slug: str) -> str:
 
 
 def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> None:
-    update_job_state(slug, status="running", error="", publish_error="")
+    update_job_state(slug, status="running", error="", publish_error="", distribution_error="")
     try:
         job_dir = create_job_from_folder(folder)
         update_job_state(slug, job_dir=str(job_dir), preview_url=infer_output_url(slug))
@@ -881,7 +1023,7 @@ def process_job(folder: Path, slug: str, repo_name: str, publish_now: bool) -> N
 
 def rerun_existing_job(slug: str) -> None:
     state = job_record(slug)
-    update_job_state(slug, status="running", error="", publish_error="", preview_url=infer_output_url(slug))
+    update_job_state(slug, status="running", error="", publish_error="", distribution_error="", preview_url=infer_output_url(slug))
     try:
         job_dir = JOBS / slug
         if not (job_dir / "job.json").exists():
@@ -899,7 +1041,7 @@ def rerun_existing_job(slug: str) -> None:
 
 
 def autopost_existing_job(slug: str) -> None:
-    update_job_state(slug, status="autoposting", error="")
+    update_job_state(slug, status="autoposting", error="", distribution_error="")
     try:
         job_dir = JOBS / slug
         result = subprocess.run(
@@ -950,9 +1092,60 @@ def delete_job(slug: str) -> None:
     if job_dir.exists():
         shutil.rmtree(job_dir)
     remove_job_state(slug)
+    with QUEUE_LOCK:
+        queue = load_queue()
+        queue.setdefault("jobs", {}).pop(slug, None)
+        save_queue(queue)
+
+
+def posting_worker_token() -> str:
+    return load_env_config().get("POSTING_WORKER_TOKEN", "").strip()
+
+
+def posting_bundle(slug: str) -> dict:
+    job_dir = JOBS / slug
+    manifest_path = job_dir / "job.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(slug)
+    manifest = json.loads(manifest_path.read_text())
+    output_dir = job_dir / "output"
+    content_dir = output_dir / "content_pack"
+    file_map: dict[str, str] = {}
+    for _, _, filename in content_file_specs():
+        file_path = content_dir / filename
+        if file_path.exists():
+            file_map[filename] = f"/preview/{slug}/content_pack/{filename}"
+    video_path = output_dir / "edited_video" / "lead-magnet.mp4"
+    transcript_path = output_dir / "transcripts" / "transcript.txt"
+    return {
+        "slug": slug,
+        "manifest": manifest,
+        "files": {
+            "content_pack": file_map,
+            "video": f"/preview/{slug}/edited_video/lead-magnet.mp4" if video_path.exists() else "",
+            "transcript": f"/preview/{slug}/transcripts/transcript.txt" if transcript_path.exists() else "",
+        },
+        "posting_queue": queue_record(slug),
+    }
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def parsed_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length) if length else b"{}"
+        if not raw:
+            return {}
+        return json.loads(raw.decode("utf-8"))
+
+    def worker_authorized(self) -> bool:
+        expected = posting_worker_token()
+        if not expected:
+            return False
+        header = self.headers.get("Authorization", "").strip()
+        if header.startswith("Bearer "):
+            return header.removeprefix("Bearer ").strip() == expected
+        return self.headers.get("X-Posting-Worker-Token", "").strip() == expected
+
     def send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
         data = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -995,6 +1188,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             self.send_json(job_record(slug))
             return
+        if self.path.startswith("/api/post-bundle/"):
+            slug = urllib.parse.unquote(self.path.removeprefix("/api/post-bundle/")).strip("/")
+            if not slug:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self.send_json(posting_bundle(slug))
+            except FileNotFoundError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+            return
         if self.path.startswith("/preview/"):
             raw = self.path.removeprefix("/preview/")
             parts = raw.split("/", 1)
@@ -1030,11 +1233,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/autopost":
             self.handle_autopost()
             return
+        if self.path == "/queue-post":
+            self.handle_queue_post()
+            return
         if self.path == "/rerun":
             self.handle_rerun()
             return
         if self.path == "/delete":
             self.handle_delete()
+            return
+        if self.path == "/api/post-queue/claim":
+            self.handle_worker_claim()
+            return
+        if self.path == "/api/post-queue/complete":
+            self.handle_worker_complete()
+            return
+        if self.path == "/api/post-queue/fail":
+            self.handle_worker_fail()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -1108,6 +1323,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         threading.Thread(target=autopost_existing_job, args=(slug,), daemon=True).start()
         self.redirect(infer_run_url(slug))
 
+    def handle_queue_post(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        slug = payload.get("slug", [""])[0].strip()
+        if not slug:
+            self.send_html(dashboard_html("Missing job slug."), status=HTTPStatus.BAD_REQUEST)
+            return
+        if not (JOBS / slug / "job.json").exists():
+            self.send_html(dashboard_html(f"Could not find {slug}."), status=HTTPStatus.NOT_FOUND)
+            return
+        queue_job_for_local_post(slug)
+        self.redirect(infer_run_url(slug))
+
     def handle_rerun(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         payload = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
@@ -1131,6 +1359,47 @@ class DashboardHandler(BaseHTTPRequestHandler):
         delete_job(slug)
         message = urllib.parse.quote(f"Deleted {slug} from the dashboard.")
         self.redirect(f"/?message={message}#runs")
+
+    def handle_worker_claim(self) -> None:
+        if not self.worker_authorized():
+            self.send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        payload = self.parsed_json_body()
+        worker_id = str(payload.get("worker_id", "")).strip() or "local-worker"
+        item = claim_next_queue_item(worker_id)
+        if not item:
+            self.send_json({"job": None})
+            return
+        slug = item["slug"]
+        self.send_json({"job": {**item, "bundle": posting_bundle(slug)}})
+
+    def handle_worker_complete(self) -> None:
+        if not self.worker_authorized():
+            self.send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        payload = self.parsed_json_body()
+        slug = str(payload.get("slug", "")).strip()
+        worker_id = str(payload.get("worker_id", "")).strip() or "local-worker"
+        results = payload.get("results", {})
+        if not slug or not isinstance(results, dict):
+            self.send_json({"error": "invalid payload"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        complete_queue_item(slug, worker_id, results)
+        self.send_json({"ok": True})
+
+    def handle_worker_fail(self) -> None:
+        if not self.worker_authorized():
+            self.send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+            return
+        payload = self.parsed_json_body()
+        slug = str(payload.get("slug", "")).strip()
+        worker_id = str(payload.get("worker_id", "")).strip() or "local-worker"
+        error = str(payload.get("error", "")).strip() or "Unknown worker error."
+        if not slug:
+            self.send_json({"error": "invalid payload"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        fail_queue_item(slug, worker_id, error)
+        self.send_json({"ok": True})
 
     def log_message(self, format: str, *args: object) -> None:
         return
