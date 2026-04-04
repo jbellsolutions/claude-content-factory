@@ -520,6 +520,54 @@ def read_optional_text(path: Path) -> str:
     return path.read_text() if path.exists() else ""
 
 
+def extract_labeled_section(text: str, label: str) -> str:
+    pattern = rf"^{re.escape(label)}:\s*(.*?)(?=^[A-Z][A-Za-z0-9 /&-]*:\s|\Z)"
+    match = re.search(pattern, text, flags=re.M | re.S)
+    return match.group(1).strip() if match else ""
+
+
+def display_text_for_content(filename: str, text: str) -> str:
+    if not text:
+        return ""
+    if filename == "facebook-post.md":
+        return extract_labeled_section(text, "Ready-To-Post Copy") or text
+    if filename == "linkedin-post.md":
+        return extract_labeled_section(text, "Recommended Post") or text
+    if filename == "linkedin-article.md":
+        parts = [
+            extract_labeled_section(text, "Title"),
+            extract_labeled_section(text, "Subtitle"),
+            extract_labeled_section(text, "Article"),
+            extract_labeled_section(text, "Closing Reflection"),
+        ]
+        return "\n\n".join(part for part in parts if part)
+    if filename == "medium-article.md":
+        parts = [
+            extract_labeled_section(text, "Title"),
+            extract_labeled_section(text, "Subtitle"),
+            extract_labeled_section(text, "Article"),
+            extract_labeled_section(text, "Final Takeaway"),
+        ]
+        return "\n\n".join(part for part in parts if part)
+    if filename == "substack-post.md":
+        parts = [
+            extract_labeled_section(text, "Title"),
+            extract_labeled_section(text, "Subtitle"),
+            extract_labeled_section(text, "Post"),
+            extract_labeled_section(text, "Postscript"),
+        ]
+        return "\n\n".join(part for part in parts if part)
+    if filename == "newsletter.md":
+        parts = [
+            extract_labeled_section(text, "Recommended Subject"),
+            extract_labeled_section(text, "Preview Text"),
+            extract_labeled_section(text, "Newsletter Body"),
+            extract_labeled_section(text, "Soft CTA"),
+        ]
+        return "\n\n".join(part for part in parts if part)
+    return text
+
+
 def directory_listing_html(slug: str, relative: str, folder: Path) -> str:
     items = []
     for path in sorted(folder.iterdir()):
@@ -575,15 +623,24 @@ def run_detail_html(slug: str) -> str:
         if not file_path.exists():
             continue
         available = True
+        raw_text = read_optional_text(file_path)
+        display_text = display_text_for_content(filename, raw_text)
         tabs.append(f'<a class="run-tab" href="#{tab_id}">{label}</a>')
         panels.append(
             f"""
             <section class="run-panel" id="{tab_id}">
               <div class="run-panel-head">
                 <h2>{label}</h2>
-                <a class="ghost" href="/preview/{slug}/content_pack/{filename}" target="_blank" rel="noreferrer">Open File</a>
+                <div class="run-panel-actions">
+                  <button type="button" class="ghost copy-button" data-copy={json.dumps(display_text)}>Copy</button>
+                  <a class="ghost" href="/preview/{slug}/content_pack/{filename}" target="_blank" rel="noreferrer">Open File</a>
+                </div>
               </div>
-              <textarea readonly>{escape(read_optional_text(file_path))}</textarea>
+              <div class="content-preview">{escape(display_text)}</div>
+              <details class="raw-toggle">
+                <summary>Show raw output</summary>
+                <textarea readonly>{escape(raw_text)}</textarea>
+              </details>
             </section>
             """
         )
@@ -643,6 +700,10 @@ def run_detail_html(slug: str) -> str:
       .run-tab{{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:999px;background:rgba(18,49,62,.08);color:var(--ink);text-decoration:none;font-weight:700;border:1px solid var(--line)}}
       .run-panel{{margin-top:18px;padding:22px;border-radius:26px;background:var(--surface-2);border:1px solid rgba(255,255,255,.34)}}
       .run-panel-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}}
+      .run-panel-actions{{display:flex;gap:10px;flex-wrap:wrap}}
+      .content-preview{{width:100%;min-height:240px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:16px/1.7 "Avenir Next","Segoe UI",sans-serif;white-space:pre-wrap}}
+      .raw-toggle{{margin-top:14px}}
+      .raw-toggle summary{{cursor:pointer;font-weight:700;color:var(--muted)}}
       textarea{{width:100%;min-height:520px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}}
       .meta-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:18px}}
       .meta-card{{padding:16px;border-radius:20px;background:rgba(255,255,255,.48);border:1px solid var(--line)}} .meta-card strong{{display:block;margin-bottom:6px}}
@@ -707,6 +768,20 @@ def run_detail_html(slug: str) -> str:
         const progressFill = document.getElementById('progress-fill');
         const statusPill = document.getElementById('status-pill');
         const statusCopy = document.getElementById('status-copy');
+        document.querySelectorAll('.copy-button').forEach((button) => {{
+          button.addEventListener('click', async () => {{
+            const text = button.dataset.copy || '';
+            if (!text) return;
+            try {{
+              await navigator.clipboard.writeText(text);
+              const original = button.textContent;
+              button.textContent = 'Copied';
+              window.setTimeout(() => {{ button.textContent = original; }}, 1400);
+            }} catch (_error) {{
+              alert('Copy failed.');
+            }}
+          }});
+        }});
         const values = {{ queued: 14, running: 58, publishing: 86, autoposting: 92, completed: 100, published: 100, autoposted: 100, failed: 100 }};
         function applyStatus(data) {{
           const status = data.status || 'unknown';

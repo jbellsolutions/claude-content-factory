@@ -20,6 +20,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
 from content_pack import generate_content_pack, infer_manifest_fields
+from factory_ingest import load_env_config
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORTLAB_FONTS = Path(reportlab.__file__).resolve().parent / "fonts"
@@ -58,6 +59,10 @@ DROP_PATTERNS = [
     re.compile(r"^(alright|alrighty|cool|boom|good stuff|fair enough)[.! ]*$", re.I),
     re.compile(r"^(yes|right|okay|thank you|sure)[.! ]*$", re.I),
 ]
+LEGACY_VOICE_NOTES = {
+    "",
+    "Authority content. Useful, specific, not salesy, not promotional.",
+}
 
 
 @dataclass
@@ -511,6 +516,13 @@ def render_page(job_dir: Path, manifest: dict, has_captions: bool) -> None:
 
 def build_job(job_dir: Path) -> None:
     manifest = load_manifest(job_dir)
+    env = load_env_config()
+    default_voice_notes = env.get(
+        "VOICE_NOTES",
+        "Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic. Use light platform-native emojis where natural.",
+    )
+    if str(manifest.get("voice_notes", "")).strip() in LEGACY_VOICE_NOTES:
+        manifest["voice_notes"] = default_voice_notes
     output_dir = job_dir / "output"
     if output_dir.exists():
         shutil.rmtree(output_dir)
