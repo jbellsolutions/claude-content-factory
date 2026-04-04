@@ -13,6 +13,26 @@ from runtime_paths import CODE_ROOT
 
 
 DNA_PATH = CODE_ROOT / "content_dna" / "authority_council.json"
+BRAND_REPLACEMENTS = {
+    "Quad Code": "Claude Code",
+    "quad code": "Claude Code",
+    "Cloud Code": "Claude Code",
+    "cloud code": "Claude Code",
+    "Quad Cowork": "Claude Cowork",
+    "quad cowork": "Claude Cowork",
+    "Quad Co-Work": "Claude Cowork",
+    "quad co-work": "Claude Cowork",
+    "Cloud Cowork": "Claude Cowork",
+    "cloud cowork": "Claude Cowork",
+    "Cloud Co-Work": "Claude Cowork",
+    "cloud co-work": "Claude Cowork",
+    "Cloud Chat": "Claude Chat",
+    "cloud chat": "Claude Chat",
+    "Quad Content Factory": "Claude Content Factory",
+    "quad content factory": "Claude Content Factory",
+    "Quad Ecosystem": "Claude Ecosystem",
+    "quad ecosystem": "Claude Ecosystem",
+}
 
 
 def load_dna() -> dict:
@@ -51,7 +71,14 @@ def normalize_ready_to_post_text(text: str) -> str:
     text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)
     text = re.sub(r"^\s*[-*]\s+", "• ", text, flags=re.M)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return normalize_brand_text(text.strip())
+
+
+def normalize_brand_text(text: str) -> str:
+    normalized = text
+    for old, new in BRAND_REPLACEMENTS.items():
+        normalized = normalized.replace(old, new)
+    return normalized.replace("Co-Work", "Cowork").replace("co-work", "cowork")
 
 
 def extract_json_object(text: str) -> dict:
@@ -235,7 +262,7 @@ def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
         elif isinstance(value, str):
             cleaned = value.strip()
             if cleaned:
-                updated[field] = cleaned.replace("Co-Work", "Cowork").replace("co-work", "cowork")
+                updated[field] = normalize_brand_text(cleaned)
     return updated
 
 
