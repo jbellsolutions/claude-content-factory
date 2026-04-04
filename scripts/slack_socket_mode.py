@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -131,9 +133,31 @@ def maybe_publish(job_dir: Path, brief: dict, config: dict[str, str]) -> None:
         "--visibility",
         visibility,
     ]
-    import subprocess
-
     subprocess.run(subprocess_cmd, check=True)
+
+
+def preferred_distribution_python(config: dict[str, str]) -> str:
+    configured = config.get("BROWSER_USE_PYTHON", "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    candidates = [
+        Path.home() / ".browser-use-env" / "bin" / "python",
+        CODE_ROOT / ".browser-use-env" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
+
+
+def maybe_distribute(job_dir: Path, config: dict[str, str]) -> None:
+    auto_distribute = config.get("SLACK_AUTO_APPROVE_POST", "").lower() in {"1", "true", "yes"}
+    if not auto_distribute:
+        return
+    subprocess.run(
+        [preferred_distribution_python(config), str(CODE_ROOT / "scripts" / "distribute_content.py"), str(job_dir)],
+        check=True,
+    )
 
 
 def handle_message(client: WebClient, event: dict, config: dict[str, str], state: dict) -> None:
@@ -176,6 +200,7 @@ def handle_message(client: WebClient, event: dict, config: dict[str, str], state
     job_dir = create_job_from_folder(folder)
     run_job(job_dir)
     maybe_publish(job_dir, brief, config)
+    maybe_distribute(job_dir, config)
     (folder / ".processed").write_text(str(job_dir))
 
     processed_keys.add(dedupe_key)

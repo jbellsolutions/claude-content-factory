@@ -186,6 +186,8 @@ or:
 
 If `SLACK_AUTO_PUBLISH=true`, the listener will also run the GitHub publish step after the build finishes.
 
+If `SLACK_AUTO_APPROVE_POST=true`, the listener will also run the approval-based distribution step after the build finishes.
+
 ### Local dashboard
 
 Start the dashboard:

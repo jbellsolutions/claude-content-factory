@@ -143,7 +143,7 @@ def base_context(manifest: dict, brief_text: str) -> str:
         Lead: {manifest.get('lead', '')}
         Brand name: {manifest.get('brand_name', manifest['title'])}
         Audience: {manifest.get('target_audience', 'Founders, operators, executives, employees learning AI')}
-        Voice notes: {manifest.get('voice_notes', 'Authority content. Useful, specific, not salesy, not promotional.')}
+        Voice notes: {manifest.get('voice_notes', 'Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic. Use light platform-native emojis where natural.')}
         CTA URL: {manifest.get('cta_url', '')}
 
         Existing checklist:
@@ -364,7 +364,7 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
                 "",
                 f"Headline: {manifest.get('headline', '')}",
                 f"Subheadline: {manifest.get('subheadline', '')}",
-                f"Voice notes: {manifest.get('voice_notes', 'Authority content. Useful, specific, not salesy, not promotional.')}",
+                f"Voice notes: {manifest.get('voice_notes', 'Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic. Use light platform-native emojis where natural.')}",
                 "",
                 "## Transcript Excerpt",
                 trimmed_transcript(transcript_text) if transcript_text else "No transcript available.",

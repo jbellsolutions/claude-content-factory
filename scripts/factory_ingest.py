@@ -54,7 +54,7 @@ def default_manifest(slug: str, env: dict[str, str] | None = None) -> dict:
         "generate_content_pack": True,
         "brand_name": env.get("BRAND_NAME", title),
         "target_audience": env.get("TARGET_AUDIENCE", "Founders, executives, operators, and employees leveling up with AI"),
-        "voice_notes": env.get("VOICE_NOTES", "Authority content. Useful, specific, not salesy, not promotional."),
+        "voice_notes": env.get("VOICE_NOTES", "Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic. Use light platform-native emojis where natural."),
         "checklist": [
             "Main lesson one",
             "Main lesson two",

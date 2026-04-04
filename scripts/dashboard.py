@@ -7,6 +7,7 @@ import mimetypes
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import traceback
 import urllib.parse
@@ -159,6 +160,21 @@ def format_subprocess_error(exc: subprocess.CalledProcessError) -> str:
     if stderr:
         parts.extend(["", "STDERR:", stderr])
     return "\n".join(parts).strip()
+
+
+def preferred_distribution_python() -> str:
+    env = load_env_config()
+    configured = env.get("BROWSER_USE_PYTHON", "").strip()
+    if configured and Path(configured).exists():
+        return configured
+    candidates = [
+        Path.home() / ".browser-use-env" / "bin" / "python",
+        ROOT / ".browser-use-env" / "bin" / "python",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
 
 
 def dashboard_html(message: str = "") -> str:
@@ -330,7 +346,7 @@ def dashboard_html(message: str = "") -> str:
               <div class="field"><label for="cta_label">CTA Label</label><input id="cta_label" type="text" name="cta_label" value="Take the full level one certification here for free" /></div>
               <div class="field"><label for="brand_name">Brand Name</label><input id="brand_name" type="text" name="brand_name" placeholder="Optional. Can be inferred from transcript" /></div>
               <div class="field"><label for="target_audience">Target Audience</label><input id="target_audience" type="text" name="target_audience" placeholder="Optional. Can be inferred from transcript" /></div>
-              <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Authority content. Useful, specific, not salesy, not promotional."></textarea></div>
+              <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic."></textarea></div>
               <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" required /></div>
               <div class="field"><label for="audio">Optional Audio</label><input id="audio" type="file" name="source_audio" accept=".m4a,.mp3,.wav" /></div>
               <div class="field"><label for="vtt">Optional VTT</label><input id="vtt" type="file" name="source_vtt" accept=".vtt" /></div>
@@ -793,7 +809,7 @@ def autopost_existing_job(slug: str) -> None:
     try:
         job_dir = JOBS / slug
         result = subprocess.run(
-            ["python3", str(ROOT / "scripts" / "distribute_content.py"), str(job_dir)],
+            [preferred_distribution_python(), str(ROOT / "scripts" / "distribute_content.py"), str(job_dir)],
             check=True,
             capture_output=True,
             text=True,
