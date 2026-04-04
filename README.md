@@ -12,7 +12,7 @@ cp config/example.env config/.env
 This repo now has two output layers:
 
 - the existing video lead-magnet pipeline
-- a transcript-driven authority content pack for Facebook, LinkedIn, Medium, newsletter, and YouTube publishing
+- a transcript-driven, ready-to-post authority content pack for Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube publishing
 
 ## What this repo is for
 
@@ -42,9 +42,11 @@ There are three layers:
 - `scripts/slack_socket_mode.py`
   - Listens to a Slack channel in Socket Mode, downloads uploaded files, and sends them through the same job runner.
 - `scripts/dashboard.py`
-  - Runs a local dashboard where you can upload files, monitor jobs, preview outputs, and publish to GitHub.
+  - Runs a local dashboard where you can upload files, monitor jobs, preview outputs, publish to GitHub, and approve distribution.
 - `scripts/content_pack.py`
-  - Uses transcript material plus Titan-style authority-content DNA to generate Facebook, LinkedIn, Medium, newsletter, and YouTube-ready assets.
+  - Uses transcript material plus Titan-style authority-content DNA to generate ready-to-post Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube assets.
+- `scripts/distribute_content.py`
+  - Uses Kit and Browser Use adapters to post approved content to configured channels.
 
 That means the automation can later be triggered from:
 
@@ -121,8 +123,10 @@ If `OPENAI_API_KEY` is set, the same run will also create:
 - `output/content_pack/linkedin-post.md`
 - `output/content_pack/linkedin-article.md`
 - `output/content_pack/medium-article.md`
+- `output/content_pack/substack-post.md`
 - `output/content_pack/newsletter.md`
 - `output/content_pack/youtube-package.md`
+- `output/content_pack/distribution-results.json`
 
 ### Slack automation
 
@@ -204,6 +208,7 @@ What it does:
 - preview the generated landing page locally
 - open the generated content pack
 - publish a completed job to GitHub from the same UI
+- approve a completed job for posting and write distribution results back into the run workspace
 
 The dashboard is intentionally local-first. It is the same pipeline with a browser front end, not a separate product.
 
@@ -217,8 +222,30 @@ Current outputs:
 - LinkedIn post
 - LinkedIn article
 - Medium article
+- Substack post
 - Newsletter edition
 - YouTube publishing package
+
+The generated channel files are now intended to be paste-ready, not markdown-first. They use labeled sections, native line breaks, and platform-friendly formatting.
+
+### Approval-based posting
+
+Use `Approve & Post` from the dashboard or run page after reviewing a completed job.
+
+Current distribution behavior:
+
+- Kit newsletter posting uses the official Kit API when `KIT_API_KEY` is configured.
+- Browser Use handles browser-driven channels such as Facebook, LinkedIn, Medium, Substack, and optional YouTube Studio upload when `BROWSER_USE_ENABLED=true`.
+- Distribution writes its result payload back to `output/content_pack/distribution-results.json`.
+
+Recommended setup for Browser Use:
+
+- run the dashboard locally on the machine that already has your authenticated Chrome profile
+- enable `BROWSER_USE_ENABLED=true`
+- leave `BROWSER_USE_STORAGE_STATE` blank to use `Browser.from_system_chrome()`, or point it at a saved storage-state file
+- set `BROWSER_USE_OPENAI_MODEL=o3` or another supported Browser Use OpenAI model
+
+This keeps posting approval explicit while still making the full path from video to published content automatable.
 
 The system is tuned for:
 

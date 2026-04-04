@@ -44,6 +44,16 @@ def write_readme(output_dir: Path, manifest: dict, generated_files: list[str], n
     )
 
 
+def normalize_ready_to_post_text(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("```", "")
+    text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = text.replace("**", "").replace("__", "")
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)
+    text = re.sub(r"^\s*[-*]\s+", "• ", text, flags=re.M)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def extract_json_object(text: str) -> dict:
     fenced = re.search(r"```json\s*(\{.*\})\s*```", text, flags=re.S)
     candidate = fenced.group(1) if fenced else text
@@ -233,11 +243,13 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
     shared = base_context(manifest, brief_text)
     if channel_key == "facebook_post":
         task = """
-        Create one Facebook post in markdown.
-        Include:
-        - Post title line
-        - Final post copy
-        - Optional image caption line
+        Create one Facebook post in ready-to-paste plain text.
+        Use natural emojis only where they improve readability.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Post Title:
+        Ready-To-Post Copy:
+        Image Caption:
         Constraints:
         - 180 to 350 words
         - clear, helpful, human
@@ -245,10 +257,13 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
         """
     elif channel_key == "linkedin_post":
         task = """
-        Create one LinkedIn post in markdown.
-        Include:
-        - 3 hook options
-        - final recommended post
+        Create one LinkedIn post in ready-to-paste plain text.
+        Use line breaks intentionally so it reads like a published LinkedIn post.
+        Use 1-3 tasteful emojis only if they genuinely improve the post.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Hook Options:
+        Recommended Post:
         Constraints:
         - concise and strategic
         - avoid sounding like ad copy
@@ -256,12 +271,13 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
         """
     elif channel_key == "linkedin_article":
         task = """
-        Create one LinkedIn article in markdown.
-        Include:
-        - title
-        - subtitle
-        - article body with clear section headers
-        - closing reflection
+        Create one LinkedIn article in ready-to-paste plain text for the LinkedIn article editor.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Title:
+        Subtitle:
+        Article:
+        Closing Reflection:
         Constraints:
         - 900 to 1400 words
         - thought leadership tone
@@ -269,25 +285,43 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
         """
     elif channel_key == "medium_article":
         task = """
-        Create one Medium article in markdown.
-        Include:
-        - title
-        - subtitle
-        - article body with strong narrative structure
-        - final takeaway section
+        Create one Medium article in ready-to-paste plain text for the Medium editor.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Title:
+        Subtitle:
+        Article:
+        Final Takeaway:
         Constraints:
         - 1100 to 1700 words
         - insight-rich and readable
         - not platform-jargon heavy
         """
+    elif channel_key == "substack_post":
+        task = """
+        Create one Substack post in ready-to-paste plain text for the Substack editor.
+        Make it feel like a credible, human essay-newsletter hybrid.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Title:
+        Subtitle:
+        Post:
+        Postscript:
+        Constraints:
+        - 900 to 1500 words
+        - personal without being casual or flimsy
+        - authority-building, not promotional
+        """
     elif channel_key == "newsletter":
         task = """
-        Create one newsletter edition in markdown.
-        Include:
-        - 3 subject lines
-        - preview text
-        - newsletter body
-        - soft CTA line
+        Create one ConvertKit-ready newsletter in plain text.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Subject Options:
+        Recommended Subject:
+        Preview Text:
+        Newsletter Body:
+        Soft CTA:
         Constraints:
         - one big idea
         - 500 to 800 words
@@ -295,15 +329,16 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
         """
     elif channel_key == "youtube_package":
         task = """
-        Create a YouTube publishing package in markdown.
-        Include:
-        - 5 title options
-        - one recommended title
-        - description
-        - chapter suggestions if supported by source material
-        - 15 tags
-        - pinned comment
-        - 5 thumbnail text options
+        Create a YouTube publishing package in ready-to-use plain text.
+        Do not use markdown syntax, bullets with `-`, code fences, or backticks.
+        Return these labeled sections exactly:
+        Title Options:
+        Recommended Title:
+        Description:
+        Chapter Suggestions:
+        Tags:
+        Pinned Comment:
+        Thumbnail Text Options:
         Constraints:
         - no clickbait
         - make the package honest and publish-ready
@@ -317,7 +352,7 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
     output_dir = job_dir / "output" / "content_pack"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_note = "This folder contains transcript-derived authority content assets generated from the Titan-style content council prompts."
+    prompt_note = "This folder contains transcript-derived, ready-to-post authority content generated from the Titan-style content council prompts."
     generated_files: list[str] = []
 
     transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
@@ -366,17 +401,18 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
             ("linkedin_post", "linkedin-post.md"),
             ("linkedin_article", "linkedin-article.md"),
             ("medium_article", "medium-article.md"),
+            ("substack_post", "substack-post.md"),
             ("newsletter", "newsletter.md"),
             ("youtube_package", "youtube-package.md"),
         ]
         for channel_key, filename in channels:
-            text = call_openai(
+            text = normalize_ready_to_post_text(call_openai(
                 channel_prompt(channel_key, manifest, brief_text, dna),
                 authority_system_prompt(dna),
                 model,
                 api_key,
                 base_url,
-            )
+            ))
             output_dir.joinpath(filename).write_text(text)
             generated_files.append(filename)
         write_readme(output_dir, manifest, generated_files, prompt_note)

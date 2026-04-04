@@ -2,3 +2,4 @@ Pillow
 imageio-ffmpeg
 reportlab
 slack_sdk
+browser-use

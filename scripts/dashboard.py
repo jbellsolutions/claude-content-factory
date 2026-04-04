@@ -148,6 +148,19 @@ def build_folder_name(title: str, filename: str) -> str:
     return f"{stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
 
+def format_subprocess_error(exc: subprocess.CalledProcessError) -> str:
+    parts = [f"Command failed with exit status {exc.returncode}:"]
+    if exc.cmd:
+        parts.append(" ".join(str(item) for item in exc.cmd))
+    stdout = (exc.stdout or "").strip()
+    stderr = (exc.stderr or "").strip()
+    if stdout:
+        parts.extend(["", "STDOUT:", stdout])
+    if stderr:
+        parts.extend(["", "STDERR:", stderr])
+    return "\n".join(parts).strip()
+
+
 def dashboard_html(message: str = "") -> str:
     env = load_env_config()
     rows = []
@@ -181,6 +194,14 @@ def dashboard_html(message: str = "") -> str:
               <button type="submit">Rerun</button>
             </form>
             """
+        autopost_form = ""
+        if job.get("has_output"):
+            autopost_form = f"""
+            <form class="inline-form" method="post" action="/autopost">
+              <input type="hidden" name="slug" value="{slug}" />
+              <button type="submit">Approve &amp; Post</button>
+            </form>
+            """
         if job.get("has_output") and status not in {"publishing", "published"}:
             publish_form = f"""
             <form class="inline-form" method="post" action="/publish">
@@ -208,6 +229,7 @@ def dashboard_html(message: str = "") -> str:
                 {content_link}
                 {live_link}
                 {rerun_form}
+                {autopost_form}
                 {publish_form}
                 {delete_form}
               </div>
@@ -253,9 +275,9 @@ def dashboard_html(message: str = "") -> str:
       .job-head{{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}
       .job-head h3{{font-size:1.18rem;line-height:1.08}}
       .status{{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border-radius:999px;font-size:.85rem;font-weight:800;text-transform:capitalize}}
-      .status-queued,.status-publishing{{background:rgba(155,92,24,.12);color:var(--amber)}}
+      .status-queued,.status-publishing,.status-autoposting{{background:rgba(155,92,24,.12);color:var(--amber)}}
       .status-running{{background:rgba(21,53,64,.12);color:var(--ink)}}
-      .status-completed,.status-published{{background:rgba(47,116,86,.12);color:var(--green)}}
+      .status-completed,.status-published,.status-autoposted{{background:rgba(47,116,86,.12);color:var(--green)}}
       .status-failed{{background:rgba(141,47,47,.12);color:var(--red)}}
       .meta{{margin-top:8px;color:var(--muted);font-size:.95rem}}
       .job-actions{{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}}
@@ -315,7 +337,7 @@ def dashboard_html(message: str = "") -> str:
               <div class="field"><label for="txt">Optional Transcript Text</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
             </div>
             <label class="checkline"><input type="checkbox" name="publish_now" value="1" /> Publish to GitHub after build</label>
-            <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, newsletter, and YouTube-ready content</label>
+            <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube-ready content</label>
             <div class="actions"><button type="submit">Create Job</button></div>
           </form>
         </div>
@@ -469,8 +491,10 @@ def content_file_specs() -> list[tuple[str, str, str]]:
         ("linkedin-post", "LinkedIn Post", "linkedin-post.md"),
         ("linkedin-article", "LinkedIn Article", "linkedin-article.md"),
         ("medium", "Medium Article", "medium-article.md"),
+        ("substack", "Substack Post", "substack-post.md"),
         ("newsletter", "Newsletter", "newsletter.md"),
         ("youtube", "YouTube Package", "youtube-package.md"),
+        ("distribution", "Distribution Results", "distribution-results.json"),
         ("context", "Source Context", "source-context.md"),
         ("errors", "Errors", "generation-error.md"),
     ]
@@ -569,6 +593,8 @@ def run_detail_html(slug: str) -> str:
         asset_links.append(f'<a class="ghost" href="/preview/{slug}/edited_video/lead-magnet.mp4" target="_blank" rel="noreferrer">Edited Video</a>')
     if (output_dir / "deliverables" / "companion-guide.pdf").exists():
         asset_links.append(f'<a class="ghost" href="/preview/{slug}/deliverables/companion-guide.pdf" target="_blank" rel="noreferrer">PDF</a>')
+    if (content_dir / "distribution-results.json").exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/content_pack/distribution-results.json" target="_blank" rel="noreferrer">Distribution Results</a>')
     if site_url:
         asset_links.append(f'<a class="ghost" href="{site_url}" target="_blank" rel="noreferrer">Live Site</a>')
 
@@ -621,6 +647,10 @@ def run_detail_html(slug: str) -> str:
         <div class="topbar-links">
           <a class="ghost" href="/">Back To Dashboard</a>
           {''.join(asset_links)}
+          <form method="post" action="/autopost">
+            <input type="hidden" name="slug" value="{escape(slug)}" />
+            <button type="submit" class="ghost">Approve &amp; Post</button>
+          </form>
           <form method="post" action="/rerun">
             <input type="hidden" name="slug" value="{escape(slug)}" />
             <button type="submit" class="ghost">Rerun Job</button>
@@ -661,7 +691,7 @@ def run_detail_html(slug: str) -> str:
         const progressFill = document.getElementById('progress-fill');
         const statusPill = document.getElementById('status-pill');
         const statusCopy = document.getElementById('status-copy');
-        const values = {{ queued: 14, running: 58, publishing: 86, completed: 100, published: 100, failed: 100 }};
+        const values = {{ queued: 14, running: 58, publishing: 86, autoposting: 92, completed: 100, published: 100, autoposted: 100, failed: 100 }};
         function applyStatus(data) {{
           const status = data.status || 'unknown';
           if (progressFill) progressFill.style.width = (values[status] || 8) + '%';
@@ -672,13 +702,15 @@ def run_detail_html(slug: str) -> str:
           if (statusCopy) {{
             if (status === 'failed') {{
               statusCopy.textContent = 'This run failed. Scroll down for the error details or return to the dashboard.';
-            }} else if (status === 'completed' || status === 'published') {{
+            }} else if (status === 'completed' || status === 'published' || status === 'autoposted') {{
               statusCopy.textContent = 'This run is ready. Your tabs and generated assets are available below.';
+            }} else if (status === 'autoposting') {{
+              statusCopy.textContent = 'This run is posting to the configured channels. Refreshing the page will show the distribution results when they are written.';
             }} else {{
               statusCopy.textContent = 'This page updates while the run is in progress. When the build completes, the generated content and assets stay available here.';
             }}
           }}
-          if ((status === 'completed' || status === 'published' || status === 'failed') && !window.__reloadedOnce) {{
+          if ((status === 'completed' || status === 'published' || status === 'autoposted' || status === 'failed') && !window.__reloadedOnce) {{
             window.__reloadedOnce = true;
             window.location.reload();
           }}
@@ -689,14 +721,14 @@ def run_detail_html(slug: str) -> str:
             if (!response.ok) return;
             const data = await response.json();
             applyStatus(data);
-            if (!['completed', 'published', 'failed'].includes(data.status)) {{
+            if (!['completed', 'published', 'autoposted', 'failed'].includes(data.status)) {{
               window.setTimeout(poll, 3000);
             }}
           }} catch (_error) {{
             window.setTimeout(poll, 5000);
           }}
         }}
-        if (!['completed', 'published', 'failed'].includes({json.dumps(status)})) {{
+        if (!['completed', 'published', 'autoposted', 'failed'].includes({json.dumps(status)})) {{
           window.setTimeout(poll, 1500);
         }}
       }})();
@@ -756,6 +788,25 @@ def rerun_existing_job(slug: str) -> None:
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 
 
+def autopost_existing_job(slug: str) -> None:
+    update_job_state(slug, status="autoposting", error="")
+    try:
+        job_dir = JOBS / slug
+        result = subprocess.run(
+            ["python3", str(ROOT / "scripts" / "distribute_content.py"), str(job_dir)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output_text = result.stdout.strip().splitlines()
+        distribution_summary = output_text[-1] if output_text else ""
+        update_job_state(slug, status="autoposted", distribution_summary=distribution_summary)
+    except subprocess.CalledProcessError as exc:
+        update_job_state(slug, status="failed", error=format_subprocess_error(exc))
+    except Exception:
+        update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
+
+
 def publish_existing_job(slug: str, repo_name: str) -> None:
     update_job_state(slug, status="publishing", error="")
     try:
@@ -777,6 +828,8 @@ def publish_existing_job(slug: str, repo_name: str) -> None:
         )
         site_url = result.stdout.strip().splitlines()[-1]
         update_job_state(slug, status="published", repo_name=repo_name, site_url=site_url)
+    except subprocess.CalledProcessError as exc:
+        update_job_state(slug, status="failed", error=format_subprocess_error(exc))
     except Exception:
         update_job_state(slug, status="failed", error=traceback.format_exc(limit=12))
 
@@ -863,6 +916,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/publish":
             self.handle_publish()
             return
+        if self.path == "/autopost":
+            self.handle_autopost()
+            return
         if self.path == "/rerun":
             self.handle_rerun()
             return
@@ -927,6 +983,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
         threading.Thread(target=publish_existing_job, args=(slug, repo_name), daemon=True).start()
         message = urllib.parse.quote(f"Publishing {slug} to GitHub.")
         self.redirect(f"/?message={message}")
+
+    def handle_autopost(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        slug = payload.get("slug", [""])[0].strip()
+        if not slug:
+            self.send_html(dashboard_html("Missing job slug."), status=HTTPStatus.BAD_REQUEST)
+            return
+        if not (JOBS / slug / "job.json").exists():
+            self.send_html(dashboard_html(f"Could not find {slug}."), status=HTTPStatus.NOT_FOUND)
+            return
+        threading.Thread(target=autopost_existing_job, args=(slug,), daemon=True).start()
+        self.redirect(infer_run_url(slug))
 
     def handle_rerun(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))

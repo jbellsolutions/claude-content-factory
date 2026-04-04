@@ -23,7 +23,7 @@
     {
       "key": "bill_mueller",
       "display_name": "Bill Mueller",
-      "use_for": ["newsletter"],
+      "use_for": ["newsletter", "substack_post"],
       "style_traits": ["story-led", "curiosity-first", "one-big-idea focus"]
     },
     {
@@ -41,7 +41,7 @@
     {
       "key": "tom_bilyeu",
       "display_name": "Tom Bilyeu",
-      "use_for": ["facebook_post", "medium_article", "authority_content"],
+      "use_for": ["facebook_post", "medium_article", "substack_post", "authority_content"],
       "style_traits": ["belief-shifting", "clear", "human", "insight-first"]
     }
   ],
@@ -61,6 +61,10 @@
     "medium_article": {
       "goal": "Create a readable, insight-rich article for a general but serious audience.",
       "format": "Narrative opening, strong sectioning, less platform-native than LinkedIn, more essay-like."
+    },
+    "substack_post": {
+      "goal": "Create a crisp essay or newsletter-style post that feels native to Substack and worth opening.",
+      "format": "Strong title, short dek or subtitle, personal but authoritative opening, structured body, thoughtful close."
     },
     "newsletter": {
       "goal": "Turn one idea from the source into a clean email worth reading on its own.",
