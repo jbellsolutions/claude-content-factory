@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import html
 import json
 import math
 import mimetypes
@@ -472,7 +473,9 @@ def build_still_clip(ffmpeg: str, image_path: Path, output_path: Path, seconds: 
     )
 
 
-def render_video(job_dir: Path, manifest: dict, segments: list[list[float]]) -> Path:
+def render_video(job_dir: Path, manifest: dict, segments: list[list[float]]) -> Path | None:
+    if not manifest.get("source_video"):
+        return None
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     source_video = job_dir / manifest["source_video"]
     output_dir = job_dir / "output" / "edited_video"
@@ -554,7 +557,7 @@ def render_pdf(job_dir: Path, manifest: dict) -> Path:
     return output
 
 
-def page_html(manifest: dict, has_captions: bool) -> str:
+def page_html(manifest: dict, has_captions: bool, has_video: bool, transcript_text: str) -> str:
     form_action = manifest.get("kit_form_action", "").strip()
     button_text = manifest.get("kit_button_text", "Get Access")
     if form_action:
@@ -576,6 +579,30 @@ def page_html(manifest: dict, has_captions: bool) -> str:
               <track kind="captions" src="transcripts/captions.vtt" srclang="en" label="English" default />
     """ if has_captions else ""
     checklist_markup = "\n".join(f"              <li>{item}</li>" for item in manifest["checklist"])
+    source_label = "Watch" if has_video else "Read"
+    source_title = "Watch the edited lead magnet." if has_video else "Read the source brief."
+    source_card = f"""
+          <div class="video-card">
+            <video controls preload="metadata" poster="site/assets/poster.jpg">
+              <source src="edited_video/lead-magnet.mp4" type="video/mp4" />
+{captions}            </video>
+            <div class="download-row">
+              <a class="button button-secondary" href="deliverables/companion-guide.pdf" download>Download Companion PDF</a>
+              <a class="button button-secondary" href="transcripts/transcript.txt" download>Download Transcript</a>
+            </div>
+          </div>
+    """ if has_video else f"""
+          <div class="video-card">
+            <div class="brief-card">
+              <p class="brief-kicker">Text Brief</p>
+              <div class="brief-preview">{html.escape(transcript_text)}</div>
+            </div>
+            <div class="download-row">
+              <a class="button button-secondary" href="deliverables/companion-guide.pdf" download>Download Companion PDF</a>
+              <a class="button button-secondary" href="transcripts/transcript.txt" download>Download Transcript</a>
+            </div>
+          </div>
+    """
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -592,7 +619,7 @@ def page_html(manifest: dict, has_captions: bool) -> str:
     <div class="page-shell">
       <header class="topbar">
         <div class="brand-lockup"><span class="brand-mark"></span><div><p class="eyebrow">Lead Magnet</p><p class="brand-name">Claude Content Factory</p></div></div>
-        <nav class="nav"><a href="#video">Watch</a><a href="#checklist">Checklist</a><a href="deliverables/companion-guide.pdf" download>Download PDF</a></nav>
+        <nav class="nav"><a href="#video">{source_label}</a><a href="#checklist">Checklist</a><a href="deliverables/companion-guide.pdf" download>Download PDF</a></nav>
       </header>
       <main>
         <section class="hero">
@@ -607,16 +634,8 @@ def page_html(manifest: dict, has_captions: bool) -> str:
           <div class="hero-art"><img src="site/assets/hero-art.png" alt="{manifest['title']} artwork" /></div>
         </section>
         <section class="video-section" id="video">
-          <div class="section-header"><p class="section-kicker">Video</p><h2>Watch the edited lead magnet.</h2></div>
-          <div class="video-card">
-            <video controls preload="metadata" poster="site/assets/poster.jpg">
-              <source src="edited_video/lead-magnet.mp4" type="video/mp4" />
-{captions}            </video>
-            <div class="download-row">
-              <a class="button button-secondary" href="deliverables/companion-guide.pdf" download>Download Companion PDF</a>
-              <a class="button button-secondary" href="transcripts/transcript.txt" download>Download Transcript</a>
-            </div>
-          </div>
+          <div class="section-header"><p class="section-kicker">Source</p><h2>{source_title}</h2></div>
+{source_card}
         </section>
         <section class="checklist-section" id="checklist">
           <div class="section-header"><p class="section-kicker">Checklist</p><h2>What they learned.</h2></div>
@@ -646,14 +665,14 @@ def page_css() -> str:
 .hero,.video-section,.checklist-section,.cta-section{margin-top:24px;border-radius:34px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
 .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:28px;align-items:center;padding:30px}.hero-copy h1,.section-header h2,.cta-section h2{font-family:"New York","Iowan Old Style",Georgia,serif}.hero-copy h1{margin:0;font-size:clamp(3rem,6vw,5.2rem);line-height:.94;max-width:10ch}.hero-headline{margin:18px 0 0;font-size:clamp(1.6rem,3vw,2.4rem);line-height:1.06;font-family:"Iowan Old Style",Georgia,serif}.hero-subheadline,.hero-lead,.section-header p,.cta-section p,.checklist-list,.note{color:var(--muted);line-height:1.65}
 .optin-form{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.optin-form input{flex:1 1 280px;min-height:50px;border-radius:999px;border:1px solid var(--line);padding:0 18px;font:inherit}.optin-form button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 22px;border-radius:999px;font-weight:800;border:0}.optin-form button,.button-primary{background:var(--ink);color:#fff8ef}.button-secondary{background:rgba(255,255,255,.56);color:var(--ink);border:1px solid var(--line)}.hero-art img{width:100%;border-radius:28px;box-shadow:0 24px 60px rgba(10,26,34,.28)}
-.video-section,.checklist-section,.cta-section{padding:30px}.section-header{max-width:50rem}.section-header h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:.98}.section-header p{margin:0}.video-card,.checklist-card{margin-top:24px;padding:18px;border-radius:28px;background:rgba(255,248,239,.72);border:1px solid rgba(255,255,255,.34)}.video-card video{width:100%;border-radius:22px;background:#0b1d27}.download-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.checklist-list{margin:0;padding-left:22px;font-size:1.03rem}.checklist-list li+li{margin-top:10px}.cta-section{text-align:center}.cta-section p{max-width:44rem;margin:0 auto 22px}
+.video-section,.checklist-section,.cta-section{padding:30px}.section-header{max-width:50rem}.section-header h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:.98}.section-header p{margin:0}.video-card,.checklist-card{margin-top:24px;padding:18px;border-radius:28px;background:rgba(255,248,239,.72);border:1px solid rgba(255,255,255,.34)}.video-card video{width:100%;border-radius:22px;background:#0b1d27}.brief-card{padding:20px;border-radius:22px;background:#fffdf9;border:1px solid var(--line)}.brief-kicker{margin:0 0 12px;letter-spacing:.08em;text-transform:uppercase;font-size:.78rem;font-weight:800;color:var(--accent)}.brief-preview{white-space:pre-wrap;line-height:1.7;color:var(--ink);max-height:560px;overflow:auto}.download-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.checklist-list{margin:0;padding-left:22px;font-size:1.03rem}.checklist-list li+li{margin-top:10px}.cta-section{text-align:center}.cta-section p{max-width:44rem;margin:0 auto 22px}
 @media (max-width:980px){.topbar,.hero{grid-template-columns:1fr}.hero{padding:24px}.hero-copy h1{max-width:12ch}}
 """
 
 
-def render_page(job_dir: Path, manifest: dict, has_captions: bool) -> None:
+def render_page(job_dir: Path, manifest: dict, has_captions: bool, has_video: bool, transcript_text: str) -> None:
     output = job_dir / "output"
-    (output / "index.html").write_text(page_html(manifest, has_captions))
+    (output / "index.html").write_text(page_html(manifest, has_captions, has_video, transcript_text))
     (output / "styles.css").write_text(page_css())
 
 
@@ -696,9 +715,10 @@ def build_job(job_dir: Path) -> None:
         manifest = infer_manifest_fields(manifest, transcript_path.read_text())
         save_manifest(job_dir, manifest)
     render_brand_assets(job_dir, manifest)
-    render_video(job_dir, manifest, segments)
+    rendered_video = render_video(job_dir, manifest, segments)
     render_pdf(job_dir, manifest)
-    render_page(job_dir, manifest, has_captions)
+    transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
+    render_page(job_dir, manifest, has_captions, bool(rendered_video), transcript_text)
     generate_content_pack(job_dir, manifest, transcript_path)
     (output_dir / ".nojekyll").write_text("")
     print(f"Built {job_dir.name}")

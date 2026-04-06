@@ -204,7 +204,8 @@ http://127.0.0.1:8090
 
 What it does:
 
-- upload a source video, optional audio, and optional VTT
+- upload a source video, paste a text brief, or provide transcript text
+- optionally include audio, VTT, or transcript text files
 - set title, headline, subheadline, lead, checklist, CTA, brand context, and repo name
 - queue the build in the background
 - preview the generated landing page locally

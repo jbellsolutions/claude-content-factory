@@ -29,16 +29,19 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--slug", required=True)
     parser.add_argument("--title")
-    parser.add_argument("--source-video", required=True)
+    parser.add_argument("--source-video")
     parser.add_argument("--source-audio")
     parser.add_argument("--source-vtt")
     parser.add_argument("--source-text")
+    parser.add_argument("--brief-text")
     parser.add_argument("--headline")
     parser.add_argument("--subheadline")
     parser.add_argument("--lead")
     args = parser.parse_args()
 
     ensure_runtime_dirs()
+    if not args.source_video and not args.source_text and not args.brief_text:
+        raise SystemExit("Provide --source-video, --source-text, or --brief-text.")
     env = load_env_config()
     slug = slugify(args.slug)
     job_dir = JOBS / slug
@@ -72,13 +75,19 @@ def main() -> None:
             "Key lesson three"
         ],
         "manual_segments": [],
-        "source_video": copy_input(args.source_video, input_dir, "source" + Path(args.source_video).suffix),
+        "source_video": copy_input(args.source_video, input_dir, "source" + Path(args.source_video).suffix)
+        if args.source_video
+        else None,
         "source_audio": copy_input(args.source_audio, input_dir, "source" + Path(args.source_audio).suffix)
         if args.source_audio
         else None,
         "source_vtt": copy_input(args.source_vtt, input_dir, "source.vtt") if args.source_vtt else None,
         "source_text": copy_input(args.source_text, input_dir, "source.txt") if args.source_text else None
     }
+    if args.brief_text and not manifest["source_text"]:
+        brief_path = input_dir / "source.txt"
+        brief_path.write_text(args.brief_text.strip())
+        manifest["source_text"] = str(brief_path.relative_to(job_dir))
 
     (job_dir / "job.json").write_text(json.dumps(manifest, indent=2))
     print(job_dir)

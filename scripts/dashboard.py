@@ -390,7 +390,7 @@ def dashboard_html(message: str = "") -> str:
             </article>
             """
         )
-    jobs_markup = "\n".join(rows) if rows else '<p class="empty">No jobs yet. Upload a video to create one.</p>'
+    jobs_markup = "\n".join(rows) if rows else '<p class="empty">No jobs yet. Upload a video or paste a brief to create one.</p>'
     info_box = f'<div class="flash">{message}</div>' if message else ""
     default_cta = env.get("DEFAULT_CTA_URL", "https://jbellsolutions.github.io/claude-code-ecosystem-certification/")
     return f"""<!doctype html>
@@ -459,7 +459,7 @@ def dashboard_html(message: str = "") -> str:
         <div>
           <p class="eyebrow">Dashboard</p>
           <h1>Claude Content Factory</h1>
-          <p class="muted">Upload a source video, optional audio and VTT, then let the same pipeline build the edited video, landing page, PDF, and publish-ready output.</p>
+          <p class="muted">Upload a source video or paste a text brief, then let the same pipeline build the landing page, PDF, transcript-backed content pack, and any available media output.</p>
         </div>
       </header>
       {info_box}
@@ -472,7 +472,7 @@ def dashboard_html(message: str = "") -> str:
       <section class="panel dashboard-section" id="tab-create">
         <div>
           <p class="eyebrow">New Job</p>
-          <h2>Drop in a video and run the pipeline.</h2>
+          <h2>Drop in a video or a text brief and run the pipeline.</h2>
           <form method="post" action="/upload" enctype="multipart/form-data" id="upload-form">
             <div class="form-grid">
               <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" placeholder="Leave blank to infer from transcript" /></div>
@@ -486,10 +486,11 @@ def dashboard_html(message: str = "") -> str:
               <div class="field"><label for="brand_name">Brand Name</label><input id="brand_name" type="text" name="brand_name" placeholder="Optional. Can be inferred from transcript" /></div>
               <div class="field"><label for="target_audience">Target Audience</label><input id="target_audience" type="text" name="target_audience" placeholder="Optional. Can be inferred from transcript" /></div>
               <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic."></textarea></div>
-              <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" required /></div>
+              <div class="field-full"><label for="brief_text">Brief Text</label><textarea id="brief_text" name="brief_text" placeholder="Optional. Paste a brain dump, content brief, article idea, transcript excerpt, or rough notes here if you want a text-only pipeline run."></textarea></div>
+              <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" /></div>
               <div class="field"><label for="audio">Optional Audio</label><input id="audio" type="file" name="source_audio" accept=".m4a,.mp3,.wav" /></div>
               <div class="field"><label for="vtt">Optional VTT</label><input id="vtt" type="file" name="source_vtt" accept=".vtt" /></div>
-              <div class="field"><label for="txt">Optional Transcript Text</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
+              <div class="field"><label for="txt">Optional Transcript Text File</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
             </div>
             <label class="checkline"><input type="checkbox" name="publish_now" value="1" /> Publish to GitHub after build</label>
             <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube-ready content</label>
@@ -500,8 +501,9 @@ def dashboard_html(message: str = "") -> str:
           <p class="eyebrow">How It Works</p>
           <h2>One engine, multiple triggers.</h2>
           <ul>
-            <li>The dashboard saves uploads into the same pipeline used by Slack and the drop folder.</li>
-            <li>Every job gets its own manifest, edited video, PDF, transcript, and landing page output.</li>
+            <li>The dashboard saves uploads and text briefs into the same pipeline used by Slack and the drop folder.</li>
+            <li>Every job gets its own manifest, PDF, transcript-backed content pack, and landing page output.</li>
+            <li>If you include video, the app also renders the edited lead-magnet video automatically.</li>
             <li>Use the preview link to review locally before publishing.</li>
             <li>Use the publish control when you want a GitHub repo and Pages site.</li>
           </ul>
@@ -636,6 +638,10 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
         elif value:
             filtered[key] = value
     return filtered
+
+
+def brief_text_from_form(form: cgi.FieldStorage) -> str:
+    return form.getfirst("brief_text", "").strip()
 
 
 def content_file_specs() -> list[tuple[str, str, str]]:
@@ -1261,27 +1267,34 @@ class DashboardHandler(BaseHTTPRequestHandler):
             environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": self.headers.get("Content-Type", "")},
         )
         video_field = form["source_video"] if "source_video" in form else None
-        if video_field is None or not getattr(video_field, "filename", ""):
-            self.send_html(dashboard_html("Source video is required."), status=HTTPStatus.BAD_REQUEST)
+        text_brief = brief_text_from_form(form)
+        text_file_present = "source_text" in form and getattr(form["source_text"], "filename", "")
+        has_video_upload = video_field is not None and getattr(video_field, "filename", "")
+        if not has_video_upload and not text_brief and not text_file_present:
+            self.send_html(dashboard_html("Add either a source video, a transcript text file, or a brief text block."), status=HTTPStatus.BAD_REQUEST)
             return
 
         title = form.getfirst("title", "").strip()
-        folder_name = build_folder_name(title, video_field.filename)
+        reference_name = video_field.filename if has_video_upload else (title or "text-brief")
+        folder_name = build_folder_name(title, reference_name)
         slug = slugify(folder_name)
         folder = INBOX / folder_name
         folder.mkdir(parents=True, exist_ok=True)
 
-        if not save_upload(video_field, folder / ("source" + Path(video_field.filename).suffix.lower())):
-            self.send_html(dashboard_html("Failed to save source video."), status=HTTPStatus.BAD_REQUEST)
-            return
+        if has_video_upload:
+            if not save_upload(video_field, folder / ("source" + Path(video_field.filename).suffix.lower())):
+                self.send_html(dashboard_html("Failed to save source video."), status=HTTPStatus.BAD_REQUEST)
+                return
 
         if "source_audio" in form and getattr(form["source_audio"], "filename", ""):
             audio_field = form["source_audio"]
             save_upload(audio_field, folder / ("source" + Path(audio_field.filename).suffix.lower()))
         if "source_vtt" in form and getattr(form["source_vtt"], "filename", ""):
             save_upload(form["source_vtt"], folder / "source.vtt")
-        if "source_text" in form and getattr(form["source_text"], "filename", ""):
+        if text_file_present:
             save_upload(form["source_text"], folder / "source.txt")
+        elif text_brief:
+            (folder / "source.txt").write_text(text_brief)
 
         manifest = manifest_from_form(form)
         if manifest:
