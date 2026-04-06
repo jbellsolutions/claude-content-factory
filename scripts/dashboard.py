@@ -459,7 +459,7 @@ def dashboard_html(message: str = "") -> str:
         <div>
           <p class="eyebrow">Dashboard</p>
           <h1>Claude Content Factory</h1>
-          <p class="muted">Upload a source video or paste a text brief, then let the same pipeline build the landing page, PDF, transcript-backed content pack, and any available media output.</p>
+          <p class="muted">Upload a source video, screenshot, transcript, or paste a text brief, then let the same pipeline build the landing page, PDF, transcript-backed content pack, and any available media output.</p>
         </div>
       </header>
       {info_box}
@@ -472,7 +472,7 @@ def dashboard_html(message: str = "") -> str:
       <section class="panel dashboard-section" id="tab-create">
         <div>
           <p class="eyebrow">New Job</p>
-          <h2>Drop in a video or a text brief and run the pipeline.</h2>
+          <h2>Drop in a video, screenshot, or text brief and run the pipeline.</h2>
           <form method="post" action="/upload" enctype="multipart/form-data" id="upload-form">
             <div class="form-grid">
               <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" placeholder="Leave blank to infer from transcript" /></div>
@@ -488,6 +488,7 @@ def dashboard_html(message: str = "") -> str:
               <div class="field-full"><label for="voice_notes">Voice Notes</label><textarea id="voice_notes" name="voice_notes" placeholder="Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic."></textarea></div>
               <div class="field-full"><label for="brief_text">Brief Text</label><textarea id="brief_text" name="brief_text" placeholder="Optional. Paste a brain dump, content brief, article idea, transcript excerpt, or rough notes here if you want a text-only pipeline run."></textarea></div>
               <div class="field-full"><label for="video">Source Video</label><input id="video" type="file" name="source_video" accept=".mp4,.mov,.m4v" /></div>
+              <div class="field"><label for="screenshot">Optional Screenshot</label><input id="screenshot" type="file" name="source_screenshot" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" /></div>
               <div class="field"><label for="audio">Optional Audio</label><input id="audio" type="file" name="source_audio" accept=".m4a,.mp3,.wav" /></div>
               <div class="field"><label for="vtt">Optional VTT</label><input id="vtt" type="file" name="source_vtt" accept=".vtt" /></div>
               <div class="field"><label for="txt">Optional Transcript Text File</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
@@ -501,7 +502,7 @@ def dashboard_html(message: str = "") -> str:
           <p class="eyebrow">How It Works</p>
           <h2>One engine, multiple triggers.</h2>
           <ul>
-            <li>The dashboard saves uploads and text briefs into the same pipeline used by Slack and the drop folder.</li>
+            <li>The dashboard saves uploads, screenshots, and text briefs into the same pipeline used by Slack and the drop folder.</li>
             <li>Every job gets its own manifest, PDF, transcript-backed content pack, and landing page output.</li>
             <li>If you include video, the app also renders the edited lead-magnet video automatically.</li>
             <li>Use the preview link to review locally before publishing.</li>
@@ -648,6 +649,8 @@ def content_file_specs() -> list[tuple[str, str, str]]:
     return [
         ("overview", "Overview", "README.md"),
         ("brief", "Authority Brief", "authority-brief.md"),
+        ("council", "Council Session", "council-session.md"),
+        ("quality-gates", "Quality Gates", "quality-gates.md"),
         ("facebook", "Facebook Post", "facebook-post.md"),
         ("linkedin-post", "LinkedIn Post", "linkedin-post.md"),
         ("linkedin-article", "LinkedIn Article", "linkedin-article.md"),
@@ -1269,9 +1272,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         video_field = form["source_video"] if "source_video" in form else None
         text_brief = brief_text_from_form(form)
         text_file_present = "source_text" in form and getattr(form["source_text"], "filename", "")
+        screenshot_present = "source_screenshot" in form and getattr(form["source_screenshot"], "filename", "")
         has_video_upload = video_field is not None and getattr(video_field, "filename", "")
-        if not has_video_upload and not text_brief and not text_file_present:
-            self.send_html(dashboard_html("Add either a source video, a transcript text file, or a brief text block."), status=HTTPStatus.BAD_REQUEST)
+        if not has_video_upload and not text_brief and not text_file_present and not screenshot_present:
+            self.send_html(dashboard_html("Add either a source video, screenshot, transcript text file, or a brief text block."), status=HTTPStatus.BAD_REQUEST)
             return
 
         title = form.getfirst("title", "").strip()
@@ -1289,6 +1293,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if "source_audio" in form and getattr(form["source_audio"], "filename", ""):
             audio_field = form["source_audio"]
             save_upload(audio_field, folder / ("source" + Path(audio_field.filename).suffix.lower()))
+        if screenshot_present:
+            screenshot_field = form["source_screenshot"]
+            save_upload(screenshot_field, folder / ("source-screenshot" + Path(screenshot_field.filename).suffix.lower()))
         if "source_vtt" in form and getattr(form["source_vtt"], "filename", ""):
             save_upload(form["source_vtt"], folder / "source.vtt")
         if text_file_present:

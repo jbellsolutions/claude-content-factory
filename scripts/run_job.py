@@ -23,7 +23,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import ListFlowable, ListItem, Paragraph, SimpleDocTemplate, Spacer
 
-from content_pack import generate_content_pack, infer_manifest_fields
+from content_pack import describe_source_screenshot, generate_content_pack, infer_manifest_fields
 from factory_ingest import load_env_config
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -557,7 +557,20 @@ def render_pdf(job_dir: Path, manifest: dict) -> Path:
     return output
 
 
-def page_html(manifest: dict, has_captions: bool, has_video: bool, transcript_text: str) -> str:
+def copy_source_screenshot(job_dir: Path, manifest: dict) -> str:
+    source_rel = manifest.get("source_screenshot")
+    if not source_rel:
+        return ""
+    source_path = job_dir / source_rel
+    if not source_path.exists():
+        return ""
+    destination = job_dir / "output" / "site" / "assets" / source_path.name
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination)
+    return f"site/assets/{destination.name}"
+
+
+def page_html(manifest: dict, has_captions: bool, has_video: bool, transcript_text: str, screenshot_relpath: str) -> str:
     form_action = manifest.get("kit_form_action", "").strip()
     button_text = manifest.get("kit_button_text", "Get Access")
     if form_action:
@@ -579,13 +592,19 @@ def page_html(manifest: dict, has_captions: bool, has_video: bool, transcript_te
               <track kind="captions" src="transcripts/captions.vtt" srclang="en" label="English" default />
     """ if has_captions else ""
     checklist_markup = "\n".join(f"              <li>{item}</li>" for item in manifest["checklist"])
-    source_label = "Watch" if has_video else "Read"
-    source_title = "Watch the edited lead magnet." if has_video else "Read the source brief."
+    source_label = "Watch" if has_video else "Review"
+    source_title = "Watch the edited lead magnet." if has_video else "Review the source brief."
+    screenshot_markup = f"""
+            <div class="source-image-card">
+              <img src="{screenshot_relpath}" alt="{manifest['title']} source screenshot" />
+            </div>
+    """ if screenshot_relpath else ""
     source_card = f"""
           <div class="video-card">
             <video controls preload="metadata" poster="site/assets/poster.jpg">
               <source src="edited_video/lead-magnet.mp4" type="video/mp4" />
 {captions}            </video>
+{screenshot_markup}
             <div class="download-row">
               <a class="button button-secondary" href="deliverables/companion-guide.pdf" download>Download Companion PDF</a>
               <a class="button button-secondary" href="transcripts/transcript.txt" download>Download Transcript</a>
@@ -593,6 +612,7 @@ def page_html(manifest: dict, has_captions: bool, has_video: bool, transcript_te
           </div>
     """ if has_video else f"""
           <div class="video-card">
+{screenshot_markup}
             <div class="brief-card">
               <p class="brief-kicker">Text Brief</p>
               <div class="brief-preview">{html.escape(transcript_text)}</div>
@@ -665,14 +685,14 @@ def page_css() -> str:
 .hero,.video-section,.checklist-section,.cta-section{margin-top:24px;border-radius:34px;background:var(--surface);border:1px solid rgba(255,255,255,.34);box-shadow:var(--shadow);backdrop-filter:blur(18px)}
 .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:28px;align-items:center;padding:30px}.hero-copy h1,.section-header h2,.cta-section h2{font-family:"New York","Iowan Old Style",Georgia,serif}.hero-copy h1{margin:0;font-size:clamp(3rem,6vw,5.2rem);line-height:.94;max-width:10ch}.hero-headline{margin:18px 0 0;font-size:clamp(1.6rem,3vw,2.4rem);line-height:1.06;font-family:"Iowan Old Style",Georgia,serif}.hero-subheadline,.hero-lead,.section-header p,.cta-section p,.checklist-list,.note{color:var(--muted);line-height:1.65}
 .optin-form{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.optin-form input{flex:1 1 280px;min-height:50px;border-radius:999px;border:1px solid var(--line);padding:0 18px;font:inherit}.optin-form button,.button{display:inline-flex;align-items:center;justify-content:center;min-height:50px;padding:0 22px;border-radius:999px;font-weight:800;border:0}.optin-form button,.button-primary{background:var(--ink);color:#fff8ef}.button-secondary{background:rgba(255,255,255,.56);color:var(--ink);border:1px solid var(--line)}.hero-art img{width:100%;border-radius:28px;box-shadow:0 24px 60px rgba(10,26,34,.28)}
-.video-section,.checklist-section,.cta-section{padding:30px}.section-header{max-width:50rem}.section-header h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:.98}.section-header p{margin:0}.video-card,.checklist-card{margin-top:24px;padding:18px;border-radius:28px;background:rgba(255,248,239,.72);border:1px solid rgba(255,255,255,.34)}.video-card video{width:100%;border-radius:22px;background:#0b1d27}.brief-card{padding:20px;border-radius:22px;background:#fffdf9;border:1px solid var(--line)}.brief-kicker{margin:0 0 12px;letter-spacing:.08em;text-transform:uppercase;font-size:.78rem;font-weight:800;color:var(--accent)}.brief-preview{white-space:pre-wrap;line-height:1.7;color:var(--ink);max-height:560px;overflow:auto}.download-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.checklist-list{margin:0;padding-left:22px;font-size:1.03rem}.checklist-list li+li{margin-top:10px}.cta-section{text-align:center}.cta-section p{max-width:44rem;margin:0 auto 22px}
+.video-section,.checklist-section,.cta-section{padding:30px}.section-header{max-width:50rem}.section-header h2{margin:0 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:.98}.section-header p{margin:0}.video-card,.checklist-card{margin-top:24px;padding:18px;border-radius:28px;background:rgba(255,248,239,.72);border:1px solid rgba(255,255,255,.34)}.video-card video{width:100%;border-radius:22px;background:#0b1d27}.source-image-card{margin-top:18px}.source-image-card img{width:100%;border-radius:22px;border:1px solid var(--line);background:#fffdf9}.brief-card{padding:20px;border-radius:22px;background:#fffdf9;border:1px solid var(--line)}.brief-kicker{margin:0 0 12px;letter-spacing:.08em;text-transform:uppercase;font-size:.78rem;font-weight:800;color:var(--accent)}.brief-preview{white-space:pre-wrap;line-height:1.7;color:var(--ink);max-height:560px;overflow:auto}.download-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}.checklist-list{margin:0;padding-left:22px;font-size:1.03rem}.checklist-list li+li{margin-top:10px}.cta-section{text-align:center}.cta-section p{max-width:44rem;margin:0 auto 22px}
 @media (max-width:980px){.topbar,.hero{grid-template-columns:1fr}.hero{padding:24px}.hero-copy h1{max-width:12ch}}
 """
 
 
-def render_page(job_dir: Path, manifest: dict, has_captions: bool, has_video: bool, transcript_text: str) -> None:
+def render_page(job_dir: Path, manifest: dict, has_captions: bool, has_video: bool, transcript_text: str, screenshot_relpath: str) -> None:
     output = job_dir / "output"
-    (output / "index.html").write_text(page_html(manifest, has_captions, has_video, transcript_text))
+    (output / "index.html").write_text(page_html(manifest, has_captions, has_video, transcript_text, screenshot_relpath))
     (output / "styles.css").write_text(page_css())
 
 
@@ -694,6 +714,20 @@ def build_job(job_dir: Path) -> None:
     segments: list[list[float]] = []
     has_captions = False
     transcript_path = None
+    screenshot_context = ""
+    if manifest.get("source_screenshot"):
+        api_key = env.get("OPENAI_API_KEY", "").strip()
+        if api_key:
+            try:
+                screenshot_context = describe_source_screenshot(
+                    job_dir / manifest["source_screenshot"],
+                    manifest,
+                    api_key,
+                    env.get("OPENAI_MODEL", "gpt-5"),
+                    env.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                ).strip()
+            except Exception as exc:
+                manifest["source_screenshot_error"] = str(exc)
     if manifest.get("source_vtt"):
         cues = cleaned_cues_from_vtt(job_dir / manifest["source_vtt"])
         if manifest.get("manual_segments"):
@@ -711,14 +745,27 @@ def build_job(job_dir: Path) -> None:
     else:
         transcript_path = generate_transcript_from_media(job_dir, manifest, env)
 
+    if screenshot_context:
+        transcript_dir = output_dir / "transcripts"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        if transcript_path and transcript_path.exists():
+            base_text = transcript_path.read_text().strip()
+            combined = "\n\n".join(part for part in [base_text, "Screenshot Context:\n" + screenshot_context] if part).strip()
+            transcript_path.write_text(combined)
+        else:
+            transcript_path = transcript_dir / "transcript.txt"
+            transcript_path.write_text("Screenshot Context:\n" + screenshot_context)
+        manifest["source_screenshot_context"] = screenshot_context
+
     if transcript_path and transcript_path.exists():
         manifest = infer_manifest_fields(manifest, transcript_path.read_text())
         save_manifest(job_dir, manifest)
     render_brand_assets(job_dir, manifest)
     rendered_video = render_video(job_dir, manifest, segments)
+    screenshot_relpath = copy_source_screenshot(job_dir, manifest)
     render_pdf(job_dir, manifest)
     transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
-    render_page(job_dir, manifest, has_captions, bool(rendered_video), transcript_text)
+    render_page(job_dir, manifest, has_captions, bool(rendered_video), transcript_text, screenshot_relpath)
     generate_content_pack(job_dir, manifest, transcript_path)
     (output_dir / ".nojekyll").write_text("")
     print(f"Built {job_dir.name}")

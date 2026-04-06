@@ -33,6 +33,7 @@ def main() -> None:
     parser.add_argument("--source-audio")
     parser.add_argument("--source-vtt")
     parser.add_argument("--source-text")
+    parser.add_argument("--source-screenshot")
     parser.add_argument("--brief-text")
     parser.add_argument("--headline")
     parser.add_argument("--subheadline")
@@ -40,8 +41,8 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_runtime_dirs()
-    if not args.source_video and not args.source_text and not args.brief_text:
-        raise SystemExit("Provide --source-video, --source-text, or --brief-text.")
+    if not args.source_video and not args.source_text and not args.brief_text and not args.source_screenshot:
+        raise SystemExit("Provide --source-video, --source-text, --source-screenshot, or --brief-text.")
     env = load_env_config()
     slug = slugify(args.slug)
     job_dir = JOBS / slug
@@ -82,7 +83,10 @@ def main() -> None:
         if args.source_audio
         else None,
         "source_vtt": copy_input(args.source_vtt, input_dir, "source.vtt") if args.source_vtt else None,
-        "source_text": copy_input(args.source_text, input_dir, "source.txt") if args.source_text else None
+        "source_text": copy_input(args.source_text, input_dir, "source.txt") if args.source_text else None,
+        "source_screenshot": copy_input(args.source_screenshot, input_dir, "source-screenshot" + Path(args.source_screenshot).suffix)
+        if args.source_screenshot
+        else None,
     }
     if args.brief_text and not manifest["source_text"]:
         brief_path = input_dir / "source.txt"

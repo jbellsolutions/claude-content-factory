@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import json
 import re
 import textwrap
@@ -13,6 +14,9 @@ from runtime_paths import CODE_ROOT
 
 
 DNA_PATH = CODE_ROOT / "content_dna" / "authority_council.json"
+TITAN_ROOT = CODE_ROOT / "content_dna" / "titan_council"
+TITAN_SWIPE_PATH = TITAN_ROOT / "SWIPE_FILE_CONTEXT.md"
+TITAN_AGENT_DIR = TITAN_ROOT / "agents"
 BRAND_REPLACEMENTS = {
     "Quad Code": "Claude Code",
     "quad code": "Claude Code",
@@ -37,6 +41,22 @@ BRAND_REPLACEMENTS = {
 
 def load_dna() -> dict:
     return json.loads(DNA_PATH.read_text())
+
+
+def load_titan_swipe_context() -> str:
+    return TITAN_SWIPE_PATH.read_text().strip() if TITAN_SWIPE_PATH.exists() else ""
+
+
+def load_titan_agents() -> list[dict]:
+    agents: list[dict] = []
+    if not TITAN_AGENT_DIR.exists():
+        return agents
+    for path in sorted(TITAN_AGENT_DIR.glob("*.json")):
+        try:
+            agents.append(json.loads(path.read_text()))
+        except json.JSONDecodeError:
+            continue
+    return agents
 
 
 def trimmed_transcript(text: str, max_chars: int = 32000) -> str:
@@ -96,12 +116,29 @@ def extract_json_object(text: str) -> dict:
         return json.loads(cleaned)
 
 
-def call_openai(prompt: str, system_prompt: str, model: str, api_key: str, base_url: str) -> str:
+def extract_between_markers(text: str, start_marker: str, end_marker: str) -> str:
+    start = text.find(start_marker)
+    end = text.find(end_marker)
+    if start == -1 or end == -1 or end <= start:
+        return ""
+    return text[start + len(start_marker) : end].strip()
+
+
+def extract_labeled_section(text: str, label: str) -> str:
+    pattern = rf"^{re.escape(label)}:\s*(.*?)(?=^[A-Z][A-Za-z0-9 /&-]*:\s|\Z)"
+    match = re.search(pattern, text, flags=re.M | re.S)
+    return match.group(1).strip() if match else ""
+
+
+def call_openai_inputs(user_content: str | list[dict], system_prompt: str, model: str, api_key: str, base_url: str) -> str:
+    user_payload = user_content
+    if isinstance(user_content, str):
+        user_payload = user_content
     body = {
         "model": model,
         "input": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": user_payload},
         ],
     }
     request = urllib.request.Request(
@@ -123,6 +160,17 @@ def call_openai(prompt: str, system_prompt: str, model: str, api_key: str, base_
             if content.get("type") == "output_text" and content.get("text"):
                 parts.append(content["text"])
     return "\n\n".join(part.strip() for part in parts if part.strip()).strip()
+
+
+def call_openai(prompt: str, system_prompt: str, model: str, api_key: str, base_url: str) -> str:
+    return call_openai_inputs(prompt, system_prompt, model, api_key, base_url)
+
+
+def image_to_data_url(image_path: Path) -> str:
+    suffix = image_path.suffix.lower().lstrip(".") or "png"
+    mime = "jpeg" if suffix == "jpg" else suffix
+    data = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    return f"data:image/{mime};base64,{data}"
 
 
 def authority_system_prompt(dna: dict) -> str:
@@ -160,6 +208,55 @@ def voice_context(dna: dict, channel_key: str) -> str:
     return "\n".join(lines)
 
 
+TITAN_CHANNEL_AGENT_KEYS = {
+    "facebook_post": ["alex_hormozi", "bill_mueller", "jon_buchan", "tom_bilyeu", "brian_kurtz"],
+    "linkedin_post": ["eugene_schwartz", "bill_mueller", "jay_abraham", "alex_hormozi", "tom_bilyeu"],
+    "linkedin_article": ["eugene_schwartz", "jay_abraham", "brian_kurtz", "ken_mccarthy", "gary_bencivenga"],
+    "medium_article": ["eugene_schwartz", "joe_sugarman", "jay_abraham", "ken_mccarthy", "brian_kurtz"],
+    "substack_post": ["bill_mueller", "brian_kurtz", "joe_sugarman", "tom_bilyeu", "jay_abraham"],
+    "newsletter": ["bill_mueller", "brian_kurtz", "eugene_schwartz", "jay_abraham", "gary_bencivenga"],
+    "youtube_package": ["eugene_schwartz", "alex_hormozi", "bill_mueller", "todd_brown", "tom_bilyeu"],
+}
+
+
+def titan_agent_summary(agent: dict) -> str:
+    sub_agents = agent.get("sub_agents", [])
+    sub_summary = "; ".join(
+        f"{item.get('name', item.get('key', 'Sub-agent'))}: {item.get('specialty', '').strip()}"
+        for item in sub_agents[:4]
+    )
+    traits = ", ".join(agent.get("style_traits", [])[:5])
+    best_for = ", ".join(agent.get("best_for", [])[:5])
+    return "\n".join(
+        [
+            f"- {agent.get('display_name', agent.get('agent_key', 'Agent'))} | {agent.get('role', '')}",
+            f"  Traits: {traits or 'n/a'}",
+            f"  Best for: {best_for or 'n/a'}",
+            f"  Sub-agents: {sub_summary or 'n/a'}",
+        ]
+    )
+
+
+def titan_context_for_channel(channel_key: str) -> str:
+    swipe_context = load_titan_swipe_context()
+    agents = load_titan_agents()
+    by_key = {agent.get("agent_key"): agent for agent in agents}
+    selected_keys = TITAN_CHANNEL_AGENT_KEYS.get(channel_key, [])
+    selected_agents = [by_key[key] for key in selected_keys if key in by_key]
+    roster = "\n".join(titan_agent_summary(agent) for agent in selected_agents)
+    swipe_excerpt = trimmed_transcript(swipe_context, max_chars=6000) if swipe_context else ""
+    return "\n\n".join(
+        part
+        for part in [
+            "Titan Council Context",
+            "Use the following council simulation internally. Keep the final tone non-salesy, authority-driven, grounded, and useful. The direct-response legends are for hook quality, clarity, structure, and editorial sharpness, not hype or aggressive selling.",
+            "Active legends and sub-agents:\n" + roster if roster else "",
+            "Swipe file context:\n" + swipe_excerpt if swipe_excerpt else "",
+        ]
+        if part
+    ).strip()
+
+
 def base_context(manifest: dict, brief_text: str) -> str:
     checklist = "\n".join(f"- {item}" for item in manifest.get("checklist", [])) or "- None provided"
     return textwrap.dedent(
@@ -186,6 +283,7 @@ def generate_brief(transcript_text: str, manifest: dict, dna: dict, api_key: str
     prompt = textwrap.dedent(
         f"""
         Build an authority-content brief from the source transcript below.
+        Use the Titan council context internally to increase hook quality, specificity, structure, and editorial sharpness, while keeping the tone non-salesy and authority-led.
 
         Requirements:
         - Write in markdown.
@@ -198,7 +296,8 @@ def generate_brief(transcript_text: str, manifest: dict, dna: dict, api_key: str
         {trimmed_transcript(transcript_text)}
         """
     ).strip()
-    return call_openai(prompt, authority_system_prompt(dna), model, api_key, base_url)
+    enhanced_prompt = "\n\n".join([titan_context_for_channel("newsletter"), prompt])
+    return call_openai(enhanced_prompt, authority_system_prompt(dna), model, api_key, base_url)
 
 
 def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
@@ -264,6 +363,38 @@ def infer_manifest_fields(manifest: dict, transcript_text: str) -> dict:
             if cleaned:
                 updated[field] = normalize_brand_text(cleaned)
     return updated
+
+
+def describe_source_screenshot(image_path: Path, manifest: dict, api_key: str, model: str, base_url: str) -> str:
+    image_prompt = textwrap.dedent(
+        f"""
+        Analyze this screenshot as source material for an authority-content pipeline.
+
+        Requirements:
+        - Extract any visible text as accurately as possible.
+        - Summarize the apparent topic, angle, and meaning.
+        - Note any visual creative direction cues that should influence content tone, framing, or language.
+        - If the screenshot suggests a quote, interface, chart, thread, or social post, explain that.
+        - Keep it grounded in what is actually visible.
+        - Do not become promotional.
+
+        Project context:
+        Title: {manifest.get('title', '')}
+        Audience: {manifest.get('target_audience', '')}
+        Voice notes: {manifest.get('voice_notes', '')}
+
+        Return plain text with these labeled sections:
+        Visible Text:
+        Meaning:
+        Visual Direction:
+        Content Opportunities:
+        """
+    ).strip()
+    user_content = [
+        {"type": "input_text", "text": image_prompt},
+        {"type": "input_image", "image_url": image_to_data_url(image_path)},
+    ]
+    return normalize_brand_text(call_openai_inputs(user_content, authority_system_prompt(load_dna()), model, api_key, base_url))
 
 
 def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict) -> str:
@@ -375,6 +506,94 @@ def channel_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict)
     return "\n\n".join([voice_context(dna, channel_key), shared, textwrap.dedent(task).strip()])
 
 
+def council_prompt(channel_key: str, manifest: dict, brief_text: str, dna: dict) -> str:
+    channel_task = channel_prompt(channel_key, manifest, brief_text, dna)
+    return "\n\n".join(
+        [
+            titan_context_for_channel(channel_key),
+            channel_task,
+            textwrap.dedent(
+                """
+                Simulate one internal council session using the active legends and their sub-agents.
+
+                The process must happen internally in this order:
+                1. Council session to pressure-test the angle, hook, structure, and clarity.
+                2. Draft quality gate.
+                3. Critique quality gate.
+                4. Approval quality gate.
+
+                Guardrails:
+                - Stay non-salesy and authority-first.
+                - Improve hooks, clarity, structure, rhythm, and readability.
+                - Use tasteful emojis only when the specific channel allows it.
+                - The final output must be ready to copy and paste with no markdown syntax.
+                - Do not invent facts.
+
+                Return exactly this structure:
+                Council Session:
+                <short editorial summary of which legends / sub-agents shaped the piece and why>
+
+                Draft Quality Gate:
+                <pass/fail summary plus the main issues caught at the draft stage>
+
+                Critique Quality Gate:
+                <pass/fail summary plus the revisions applied>
+
+                Approval Quality Gate:
+                <pass/fail summary plus the final editorial sign-off>
+
+                === FINAL OUTPUT START ===
+                <the full final channel deliverable using the exact channel-specific labels requested above>
+                === FINAL OUTPUT END ===
+                """
+            ).strip(),
+        ]
+    ).strip()
+
+
+def generate_channel_with_council(
+    channel_key: str,
+    manifest: dict,
+    brief_text: str,
+    dna: dict,
+    api_key: str,
+    model: str,
+    base_url: str,
+) -> tuple[str, str, str]:
+    raw = call_openai(
+        council_prompt(channel_key, manifest, brief_text, dna),
+        authority_system_prompt(dna),
+        model,
+        api_key,
+        base_url,
+    )
+    final_output = extract_between_markers(raw, "=== FINAL OUTPUT START ===", "=== FINAL OUTPUT END ===")
+    council_session = extract_labeled_section(raw, "Council Session")
+    draft_gate = extract_labeled_section(raw, "Draft Quality Gate")
+    critique_gate = extract_labeled_section(raw, "Critique Quality Gate")
+    approval_gate = extract_labeled_section(raw, "Approval Quality Gate")
+    gate_text = "\n\n".join(
+        [
+            f"## {channel_key.replace('_', ' ').title()}",
+            "### Draft Quality Gate",
+            draft_gate or "Not provided.",
+            "",
+            "### Critique Quality Gate",
+            critique_gate or "Not provided.",
+            "",
+            "### Approval Quality Gate",
+            approval_gate or "Not provided.",
+        ]
+    ).strip()
+    council_text = "\n\n".join(
+        [
+            f"## {channel_key.replace('_', ' ').title()}",
+            council_session or "No council summary returned.",
+        ]
+    ).strip()
+    return normalize_ready_to_post_text(final_output or raw), council_text, gate_text
+
+
 def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path | None) -> None:
     output_dir = job_dir / "output" / "content_pack"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -383,6 +602,7 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
     generated_files: list[str] = []
 
     transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
+    screenshot_context = str(manifest.get("source_screenshot_context", "")).strip()
     context_path = output_dir / "source-context.md"
     context_path.write_text(
         "\n".join(
@@ -395,6 +615,9 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
                 "",
                 "## Transcript Excerpt",
                 trimmed_transcript(transcript_text) if transcript_text else "No transcript available.",
+                "",
+                "## Screenshot Context",
+                screenshot_context or "No screenshot context available.",
             ]
         )
     )
@@ -422,6 +645,8 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
         brief_text = generate_brief(transcript_text, manifest, dna, api_key, model, base_url)
         output_dir.joinpath("authority-brief.md").write_text(brief_text)
         generated_files.append("authority-brief.md")
+        council_notes: list[str] = ["# Council Session", "", "This file captures the internal Titan council summary used to shape each channel draft."]
+        gate_notes: list[str] = ["# Quality Gates", "", "These are the three internal quality gates applied to each channel: draft, critique, and approval."]
 
         channels = [
             ("facebook_post", "facebook-post.md"),
@@ -433,15 +658,23 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
             ("youtube_package", "youtube-package.md"),
         ]
         for channel_key, filename in channels:
-            text = normalize_ready_to_post_text(call_openai(
-                channel_prompt(channel_key, manifest, brief_text, dna),
-                authority_system_prompt(dna),
-                model,
+            text, council_text, gate_text = generate_channel_with_council(
+                channel_key,
+                manifest,
+                brief_text,
+                dna,
                 api_key,
+                model,
                 base_url,
-            ))
+            )
             output_dir.joinpath(filename).write_text(text)
             generated_files.append(filename)
+            council_notes.extend(["", council_text])
+            gate_notes.extend(["", gate_text])
+        output_dir.joinpath("council-session.md").write_text("\n".join(council_notes).strip() + "\n")
+        generated_files.append("council-session.md")
+        output_dir.joinpath("quality-gates.md").write_text("\n".join(gate_notes).strip() + "\n")
+        generated_files.append("quality-gates.md")
         write_readme(output_dir, manifest, generated_files, prompt_note)
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
