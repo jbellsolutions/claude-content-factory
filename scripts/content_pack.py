@@ -14,9 +14,12 @@ from runtime_paths import CODE_ROOT
 
 
 DNA_PATH = CODE_ROOT / "content_dna" / "authority_council.json"
+COMMUNITY_TEMPLATE_PATH = CODE_ROOT / "content_dna" / "community_growth_template.json"
 TITAN_ROOT = CODE_ROOT / "content_dna" / "titan_council"
 TITAN_SWIPE_PATH = TITAN_ROOT / "SWIPE_FILE_CONTEXT.md"
 TITAN_AGENT_DIR = TITAN_ROOT / "agents"
+AUTHORITY_CONTENT_PATH = "authority_post"
+COMMUNITY_CONTENT_PATH = "community_growth_post"
 BRAND_REPLACEMENTS = {
     "Quad Code": "Claude Code",
     "quad code": "Claude Code",
@@ -57,6 +60,57 @@ def load_titan_agents() -> list[dict]:
         except json.JSONDecodeError:
             continue
     return agents
+
+
+def normalize_content_path(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == COMMUNITY_CONTENT_PATH:
+        return COMMUNITY_CONTENT_PATH
+    return AUTHORITY_CONTENT_PATH
+
+
+def load_community_template() -> dict:
+    defaults = {
+        "middle_blurb": (
+            "AI Integrators is building a community in Skool, in the Philippines and around the world, "
+            "for people who want to work remotely and deliver real business outcomes. Our graduates are as "
+            "skilled as anyone because they put in the reps, earned certification, and proved they can execute. "
+            "They are trained, coached, and supported to plug into real businesses as AI integrators and do the "
+            "day-to-day building work that keeps operations moving."
+        ),
+        "case_studies": [
+            "Implementing AI workflows across the business.",
+            "Running high-level content marketing systems and automations using proven swipe-file frameworks.",
+            "Organizing operations into one central heartbeat and automating the flow of work.",
+            "Outsourcing and automating recruiting so hiring no longer blocks growth.",
+            "Building apps, launching new divisions, and standing up new internal capabilities.",
+        ],
+        "closing_blurb": (
+            "If you run a business, launch apps, manage a team, coach, consult, or lead any operation, "
+            "you need AI integration now. If someone in this post, or another graduate, feels like a fit, "
+            "reach out and we can match you with the right person. We provide ongoing coaching and technical "
+            "management, so support comes to us, not your internal team. Graduates can always send us Loom videos "
+            "or reach out directly for one-on-one help."
+        ),
+    }
+    if not COMMUNITY_TEMPLATE_PATH.exists():
+        return defaults
+    try:
+        payload = json.loads(COMMUNITY_TEMPLATE_PATH.read_text())
+    except json.JSONDecodeError:
+        return defaults
+
+    template = dict(defaults)
+    for key in ["middle_blurb", "closing_blurb"]:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            template[key] = value.strip()
+    case_studies = payload.get("case_studies")
+    if isinstance(case_studies, list):
+        cleaned = [str(item).strip() for item in case_studies if str(item).strip()]
+        if cleaned:
+            template["case_studies"] = cleaned
+    return template
 
 
 def trimmed_transcript(text: str, max_chars: int = 32000) -> str:
@@ -277,6 +331,215 @@ def base_context(manifest: dict, brief_text: str) -> str:
         {brief_text}
         """
     ).strip()
+
+
+def generate_community_spotlight(transcript_text: str, manifest: dict, api_key: str, model: str, base_url: str) -> dict:
+    prompt = textwrap.dedent(
+        f"""
+        Build a structured graduate/community highlight summary from the source material below.
+
+        Return JSON only with this schema:
+        {{
+          "honoree_name": "string (empty if unknown)",
+          "congrats_line": "one sentence",
+          "profile_blurb": "2 to 4 sentences",
+          "learned_and_overcame": ["optional bullet", "optional bullet"]
+        }}
+
+        Rules:
+        - Keep it grounded in provided source material only.
+        - If the source does not clearly provide "learned and overcame" details, return an empty array.
+        - Do not invent credentials, metrics, employers, or outcomes.
+        - Keep the tone celebratory, specific, and human.
+
+        Context:
+        Title: {manifest.get('title', '')}
+        Headline: {manifest.get('headline', '')}
+        Subheadline: {manifest.get('subheadline', '')}
+        Voice notes: {manifest.get('voice_notes', '')}
+
+        Source:
+        {trimmed_transcript(transcript_text, max_chars=28000)}
+        """
+    ).strip()
+    fallback = {
+        "honoree_name": "",
+        "congrats_line": "Big congratulations to our newest AI Integrators graduate.",
+        "profile_blurb": "This spotlight recognizes someone who put in real work and showed up consistently to improve.",
+        "learned_and_overcame": [],
+    }
+    try:
+        raw = call_openai(prompt, authority_system_prompt(load_dna()), model, api_key, base_url)
+        payload = extract_json_object(raw)
+    except Exception:
+        return fallback
+
+    spotlight = dict(fallback)
+    if isinstance(payload.get("honoree_name"), str):
+        spotlight["honoree_name"] = payload["honoree_name"].strip()
+    if isinstance(payload.get("congrats_line"), str) and payload["congrats_line"].strip():
+        spotlight["congrats_line"] = normalize_brand_text(payload["congrats_line"].strip())
+    if isinstance(payload.get("profile_blurb"), str) and payload["profile_blurb"].strip():
+        spotlight["profile_blurb"] = normalize_brand_text(payload["profile_blurb"].strip())
+    learned = payload.get("learned_and_overcame")
+    if isinstance(learned, list):
+        spotlight["learned_and_overcame"] = [
+            normalize_brand_text(str(item).strip())
+            for item in learned
+            if str(item).strip()
+        ][:6]
+    return spotlight
+
+
+def community_case_studies_text(template: dict) -> str:
+    lines = ["Case study examples AI integrators can lead:"]
+    lines.extend(f"• {item}" for item in template.get("case_studies", []))
+    return "\n".join(lines)
+
+
+def community_post_body(spotlight: dict, template: dict) -> str:
+    parts = [
+        str(spotlight.get("congrats_line", "")).strip(),
+        str(spotlight.get("profile_blurb", "")).strip(),
+    ]
+    learned = [
+        str(item).strip()
+        for item in spotlight.get("learned_and_overcame", [])
+        if str(item).strip()
+    ]
+    if learned:
+        parts.append("What they learned and overcame:\n" + "\n".join(f"• {item}" for item in learned))
+    parts.extend(
+        [
+            str(template.get("middle_blurb", "")).strip(),
+            community_case_studies_text(template),
+            str(template.get("closing_blurb", "")).strip(),
+        ]
+    )
+    return normalize_ready_to_post_text("\n\n".join(part for part in parts if part).strip())
+
+
+def community_facebook_post(manifest: dict, spotlight: dict, template: dict) -> str:
+    honoree = str(spotlight.get("honoree_name", "")).strip()
+    title = f"Graduate Spotlight: {honoree}" if honoree else f"Graduate Spotlight: {manifest.get('title', 'AI Integrators')}"
+    body = community_post_body(spotlight, template)
+    return "\n".join(
+        [
+            f"Post Title: {title}",
+            "Ready-To-Post Copy:",
+            body,
+            "",
+            "Image Caption:",
+            title,
+        ]
+    ).strip()
+
+
+def community_linkedin_post(spotlight: dict, template: dict) -> str:
+    honoree = str(spotlight.get("honoree_name", "")).strip()
+    hook_one = str(spotlight.get("congrats_line", "")).strip() or "New AI Integrators graduate spotlight."
+    hook_two = f"Meet {honoree}, one of our newest certified AI integrators." if honoree else "Meet one of our newest certified AI integrators."
+    hook_three = "Skilled AI integrators are changing how businesses operate, and this graduate is proof."
+    body = community_post_body(spotlight, template)
+    return "\n".join(
+        [
+            "Hook Options:",
+            f"1) {hook_one}",
+            f"2) {hook_two}",
+            f"3) {hook_three}",
+            "",
+            "Recommended Post:",
+            body,
+        ]
+    ).strip()
+
+
+def community_youtube_package(manifest: dict, spotlight: dict, template: dict) -> str:
+    honoree = str(spotlight.get("honoree_name", "")).strip()
+    name_fragment = honoree if honoree else "Our Newest Graduate"
+    description = community_post_body(spotlight, template)
+    learned = [
+        str(item).strip()
+        for item in spotlight.get("learned_and_overcame", [])
+        if str(item).strip()
+    ]
+    chapter_sections = [
+        "00:00 Graduate Highlight",
+        "00:20 What Makes This Person Stand Out",
+    ]
+    if learned:
+        chapter_sections.append("00:50 Lessons Learned And Obstacles Overcome")
+    chapter_sections.extend(
+        [
+            "01:20 Why AI Integrators Matter In Real Businesses",
+            "02:10 Case Study Examples Across Operations, Marketing, And Recruiting",
+            "03:00 Who This Is For And How To Reach Out",
+        ]
+    )
+    return "\n".join(
+        [
+            "Title Options:",
+            f"- {name_fragment}: AI Integrators Graduate Spotlight",
+            f"- New Graduate Spotlight: {name_fragment}",
+            "- Why Businesses Need AI Integrators Right Now",
+            "",
+            f"Recommended Title: {name_fragment}: AI Integrators Graduate Spotlight",
+            "",
+            "Description:",
+            description,
+            "",
+            "Chapter Suggestions:",
+            "\n".join(chapter_sections),
+            "",
+            "Tags:",
+            "ai integrator, ai automation, business systems, operations automation, remote ai talent, skool, philippines",
+            "",
+            "Pinned Comment:",
+            str(template.get("closing_blurb", "")).strip(),
+            "",
+            "Thumbnail Text Options:",
+            "- New AI Integrator Graduate",
+            "- Graduate Spotlight",
+            "- Businesses Need This Role",
+        ]
+    ).strip()
+
+
+def community_brief_markdown(manifest: dict, spotlight: dict, template: dict) -> str:
+    learned = [
+        str(item).strip()
+        for item in spotlight.get("learned_and_overcame", [])
+        if str(item).strip()
+    ]
+    learned_lines = "\n".join(f"- {item}" for item in learned) if learned else "- No explicit learned/overcame points were found in source material."
+    case_studies = "\n".join(f"- {item}" for item in template.get("case_studies", []))
+    return "\n".join(
+        [
+            "# Community Growth Brief",
+            "",
+            f"Title: {manifest.get('title', '')}",
+            f"Content Path: {COMMUNITY_CONTENT_PATH}",
+            f"Honoree: {spotlight.get('honoree_name', '') or 'Not explicitly named in source'}",
+            "",
+            "## Congrats Line",
+            spotlight.get("congrats_line", ""),
+            "",
+            "## Profile Blurb",
+            spotlight.get("profile_blurb", ""),
+            "",
+            "## Learned And Overcame",
+            learned_lines,
+            "",
+            "## Fixed Middle Blurb",
+            str(template.get("middle_blurb", "")).strip(),
+            "",
+            "## Case Study Block",
+            case_studies,
+            "",
+            "## Fixed Closing Blurb",
+            str(template.get("closing_blurb", "")).strip(),
+        ]
+    ).strip() + "\n"
 
 
 def generate_brief(transcript_text: str, manifest: dict, dna: dict, api_key: str, model: str, base_url: str) -> str:
@@ -598,8 +861,9 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
     output_dir = job_dir / "output" / "content_pack"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt_note = "This folder contains transcript-derived, ready-to-post authority content generated from the Titan-style content council prompts."
     generated_files: list[str] = []
+    content_path = normalize_content_path(str(manifest.get("content_path", AUTHORITY_CONTENT_PATH)))
+    manifest["content_path"] = content_path
 
     transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
     screenshot_context = str(manifest.get("source_screenshot_context", "")).strip()
@@ -637,10 +901,46 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
         write_readme(output_dir, manifest, generated_files, "Set `OPENAI_API_KEY` to generate the full content pack automatically.")
         return
 
-    dna = load_dna()
     model = env.get("OPENAI_MODEL", "gpt-5")
     base_url = env.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+    if content_path == COMMUNITY_CONTENT_PATH:
+        prompt_note = "This folder contains transcript-derived, ready-to-post community growth content for graduate and highlight posts."
+        template = load_community_template()
+        try:
+            spotlight = generate_community_spotlight(transcript_text, manifest, api_key, model, base_url)
+            community_brief = community_brief_markdown(manifest, spotlight, template)
+            output_dir.joinpath("community-brief.md").write_text(community_brief)
+            generated_files.append("community-brief.md")
+
+            facebook_text = community_facebook_post(manifest, spotlight, template)
+            output_dir.joinpath("facebook-post.md").write_text(facebook_text)
+            generated_files.append("facebook-post.md")
+
+            linkedin_text = community_linkedin_post(spotlight, template)
+            output_dir.joinpath("linkedin-post.md").write_text(linkedin_text)
+            generated_files.append("linkedin-post.md")
+
+            youtube_text = community_youtube_package(manifest, spotlight, template)
+            output_dir.joinpath("youtube-package.md").write_text(youtube_text)
+            generated_files.append("youtube-package.md")
+
+            write_readme(output_dir, manifest, generated_files, prompt_note)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            output_dir.joinpath("generation-error.md").write_text(
+                f"# Content Pack Generation Error\n\nHTTP {exc.code}\n\n```\n{body}\n```"
+            )
+            generated_files.append("generation-error.md")
+            write_readme(output_dir, manifest, generated_files, "The content-pack request reached the model provider but failed. See `generation-error.md`.")
+        except Exception as exc:
+            output_dir.joinpath("generation-error.md").write_text(f"# Content Pack Generation Error\n\n{exc}\n")
+            generated_files.append("generation-error.md")
+            write_readme(output_dir, manifest, generated_files, "The content-pack generation step failed before completion. See `generation-error.md`.")
+        return
+
+    prompt_note = "This folder contains transcript-derived, ready-to-post authority content generated from the Titan-style content council prompts."
+    dna = load_dna()
     try:
         brief_text = generate_brief(transcript_text, manifest, dna, api_key, model, base_url)
         output_dir.joinpath("authority-brief.md").write_text(brief_text)

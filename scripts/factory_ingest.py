@@ -52,6 +52,7 @@ def default_manifest(slug: str, env: dict[str, str] | None = None) -> dict:
         "kit_form_action": env.get("KIT_FORM_ACTION", ""),
         "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
         "kit_tag": env.get("KIT_TAG", ""),
+        "content_path": "authority_post",
         "generate_content_pack": True,
         "brand_name": env.get("BRAND_NAME", title),
         "target_audience": env.get("TARGET_AUDIENCE", "Founders, executives, operators, and employees leveling up with AI"),

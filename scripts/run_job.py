@@ -526,6 +526,8 @@ def render_video(job_dir: Path, manifest: dict, segments: list[list[float]]) -> 
             ]
         )
 
+    # Recreate temp dir right before concat write in case external cleanup removed it mid-run.
+    tmp_dir.mkdir(parents=True, exist_ok=True)
     concat_list = tmp_dir / "concat.txt"
     concat_list.write_text("".join(f"file '{part.as_posix()}'\n" for part in [intro, body, outro]))
     run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(final_clip)])

@@ -26,6 +26,22 @@ CHANNEL_FILES = {
     "youtube_package": "youtube-package.md",
 }
 
+AUTHORITY_CONTENT_PATH = "authority_post"
+COMMUNITY_CONTENT_PATH = "community_growth_post"
+AUTHORITY_DEFAULT_CHANNELS = [
+    "newsletter",
+    "facebook_post",
+    "linkedin_post",
+    "linkedin_article",
+    "medium_article",
+    "substack_post",
+    "youtube_package",
+]
+COMMUNITY_DEFAULT_CHANNELS = [
+    "facebook_post",
+    "linkedin_post",
+    "youtube_package",
+]
 DEFAULT_BROWSER_USE_CHANNELS = [
     "facebook_post",
     "linkedin_post",
@@ -54,6 +70,20 @@ def truthy(value: str | bool | None, default: bool = False) -> bool:
     if value is None:
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_content_path(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == COMMUNITY_CONTENT_PATH:
+        return COMMUNITY_CONTENT_PATH
+    return AUTHORITY_CONTENT_PATH
+
+
+def default_channels_for_manifest(manifest: dict[str, Any]) -> list[str]:
+    content_path = normalize_content_path(str(manifest.get("content_path", AUTHORITY_CONTENT_PATH)))
+    if content_path == COMMUNITY_CONTENT_PATH:
+        return list(COMMUNITY_DEFAULT_CHANNELS)
+    return list(AUTHORITY_DEFAULT_CHANNELS)
 
 
 def extract_section(text: str, label: str) -> str:
@@ -273,13 +303,15 @@ def main() -> None:
     parser.add_argument(
         "--channels",
         nargs="*",
-        default=["newsletter", *DEFAULT_BROWSER_USE_CHANNELS],
+        default=None,
         choices=sorted(CHANNEL_FILES.keys()),
     )
     args = parser.parse_args()
 
     job_dir = Path(args.job_dir).resolve()
-    results = build_results(job_dir, args.channels)
+    manifest = read_json(job_dir / "job.json")
+    channels = args.channels if args.channels else default_channels_for_manifest(manifest)
+    results = build_results(job_dir, channels)
     output_path = job_dir / "output" / "content_pack" / "distribution-results.json"
     write_json(output_path, results)
     print(json.dumps(results))

@@ -9,10 +9,11 @@ make deps
 cp config/example.env config/.env
 ```
 
-This repo now has two output layers:
+This repo now has multiple output layers:
 
 - the existing video lead-magnet pipeline
 - a transcript-driven, ready-to-post authority content pack for Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube publishing
+- a community growth path for graduate/highlight posts (Facebook, LinkedIn, and YouTube package)
 
 ## What this repo is for
 
@@ -44,7 +45,9 @@ There are three layers:
 - `scripts/dashboard.py`
   - Runs a local dashboard where you can upload files, monitor jobs, preview outputs, publish to GitHub, and approve distribution.
 - `scripts/content_pack.py`
-  - Uses transcript material plus Titan-style authority-content DNA to generate ready-to-post Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube assets.
+  - Uses transcript material to generate either:
+    - authority content (Facebook, LinkedIn, LinkedIn article, Medium, Substack, newsletter, YouTube), or
+    - community growth content (graduate/highlight-focused Facebook, LinkedIn, YouTube).
 - `scripts/distribute_content.py`
   - Uses Kit and Browser Use adapters to post approved content to configured channels.
 
@@ -206,6 +209,9 @@ What it does:
 
 - upload a source video, paste a text brief, or provide transcript text
 - optionally include audio, VTT, or transcript text files
+- choose a content path:
+  - `Authority Post` (default)
+  - `Community Growth Post` (graduates/highlights)
 - set title, headline, subheadline, lead, checklist, CTA, brand context, and repo name
 - queue the build in the background
 - preview the generated landing page locally
@@ -230,6 +236,17 @@ Current outputs:
 - YouTube publishing package
 
 The generated channel files are now intended to be paste-ready, not markdown-first. They use labeled sections, native line breaks, and platform-friendly formatting.
+
+### Community growth content pack
+
+When `content_path=community_growth_post`, the pipeline generates:
+
+- Community brief
+- Facebook post
+- LinkedIn post
+- YouTube publishing package
+
+This path is designed for graduate spotlights and group highlights, with a fixed middle blurb, fixed case-study block, and fixed closing CTA block loaded from `content_dna/community_growth_template.json`.
 
 ### Approval-based posting
 

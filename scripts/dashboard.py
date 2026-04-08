@@ -26,7 +26,9 @@ STATE_FILE = DATA_ROOT / ".dashboard_state.json"
 QUEUE_FILE = DATA_ROOT / ".posting_queue.json"
 STATE_LOCK = threading.Lock()
 QUEUE_LOCK = threading.Lock()
-DEFAULT_POST_CHANNELS = [
+AUTHORITY_CONTENT_PATH = "authority_post"
+COMMUNITY_CONTENT_PATH = "community_growth_post"
+AUTHORITY_POST_CHANNELS = [
     "newsletter",
     "facebook_post",
     "linkedin_post",
@@ -35,6 +37,36 @@ DEFAULT_POST_CHANNELS = [
     "substack_post",
     "youtube_package",
 ]
+COMMUNITY_POST_CHANNELS = [
+    "facebook_post",
+    "linkedin_post",
+    "youtube_package",
+]
+DEFAULT_POST_CHANNELS = AUTHORITY_POST_CHANNELS
+
+
+def normalized_content_path(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized == COMMUNITY_CONTENT_PATH:
+        return COMMUNITY_CONTENT_PATH
+    return AUTHORITY_CONTENT_PATH
+
+
+def post_channels_for_content_path(content_path: str) -> list[str]:
+    if normalized_content_path(content_path) == COMMUNITY_CONTENT_PATH:
+        return list(COMMUNITY_POST_CHANNELS)
+    return list(AUTHORITY_POST_CHANNELS)
+
+
+def content_path_for_slug(slug: str) -> str:
+    manifest_path = JOBS / slug / "job.json"
+    if not manifest_path.exists():
+        return AUTHORITY_CONTENT_PATH
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return AUTHORITY_CONTENT_PATH
+    return normalized_content_path(str(manifest.get("content_path", AUTHORITY_CONTENT_PATH)))
 
 
 def now_iso() -> str:
@@ -416,7 +448,7 @@ def dashboard_html(message: str = "") -> str:
       .field,.field-full{{display:flex;flex-direction:column;gap:8px}}
       .field-full{{grid-column:1 / -1}}
       label{{font-size:.92rem;font-weight:700}}
-      input[type=text],input[type=url],textarea,input[type=file]{{width:100%;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.76);font:inherit;color:var(--ink)}}
+      input[type=text],input[type=url],textarea,input[type=file],select{{width:100%;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:rgba(255,255,255,.76);font:inherit;color:var(--ink)}}
       textarea{{min-height:110px;resize:vertical}}
       .checkline{{display:flex;align-items:center;gap:10px;margin-top:10px;font-weight:600}}
       button,.ghost{{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 20px;border-radius:999px;border:0;font-weight:800;font:inherit;text-decoration:none}}
@@ -477,6 +509,13 @@ def dashboard_html(message: str = "") -> str:
             <div class="form-grid">
               <div class="field"><label for="title">Title</label><input id="title" type="text" name="title" placeholder="Leave blank to infer from transcript" /></div>
               <div class="field"><label for="repo_name">Repo Name</label><input id="repo_name" type="text" name="repo_name" placeholder="claude-in-15-minutes-lead-magnet" /></div>
+              <div class="field-full">
+                <label for="content_path">Content Path</label>
+                <select id="content_path" name="content_path">
+                  <option value="authority_post" selected>Authority Post</option>
+                  <option value="community_growth_post">Community Growth Post (graduates/highlights)</option>
+                </select>
+              </div>
               <div class="field-full"><label for="headline">Headline</label><input id="headline" type="text" name="headline" placeholder="Leave blank to infer from transcript" /></div>
               <div class="field-full"><label for="subheadline">Subheadline</label><input id="subheadline" type="text" name="subheadline" placeholder="Leave blank to infer from transcript" /></div>
               <div class="field-full"><label for="lead">Lead</label><textarea id="lead" name="lead" placeholder="Leave blank to infer from transcript"></textarea></div>
@@ -494,7 +533,7 @@ def dashboard_html(message: str = "") -> str:
               <div class="field"><label for="txt">Optional Transcript Text File</label><input id="txt" type="file" name="source_text" accept=".txt,text/plain" /></div>
             </div>
             <label class="checkline"><input type="checkbox" name="publish_now" value="1" /> Publish to GitHub after build</label>
-            <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube-ready content</label>
+            <label class="checkline"><input type="checkbox" name="generate_content_pack" value="1" checked /> Generate channel-ready content for the selected path</label>
             <div class="actions"><button type="submit">Create Job</button></div>
           </form>
         </div>
@@ -610,6 +649,7 @@ def dashboard_html(message: str = "") -> str:
 
 
 def manifest_from_form(form: cgi.FieldStorage) -> dict:
+    content_path = normalized_content_path(form.getfirst("content_path", AUTHORITY_CONTENT_PATH))
     checklist = [line.strip() for line in form.getfirst("checklist", "").splitlines() if line.strip()]
     auto_fill_fields = [
         field
@@ -628,6 +668,7 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
         "brand_name": form.getfirst("brand_name", "").strip(),
         "target_audience": form.getfirst("target_audience", "").strip(),
         "voice_notes": form.getfirst("voice_notes", "").strip(),
+        "content_path": content_path,
         "generate_content_pack": form.getfirst("generate_content_pack", "") == "1",
         "checklist": checklist,
         "auto_fill_fields": auto_fill_fields,
@@ -648,6 +689,7 @@ def brief_text_from_form(form: cgi.FieldStorage) -> str:
 def content_file_specs() -> list[tuple[str, str, str]]:
     return [
         ("overview", "Overview", "README.md"),
+        ("community-brief", "Community Brief", "community-brief.md"),
         ("brief", "Authority Brief", "authority-brief.md"),
         ("council", "Council Session", "council-session.md"),
         ("quality-gates", "Quality Gates", "quality-gates.md"),
@@ -1054,8 +1096,15 @@ def autopost_existing_job(slug: str) -> None:
     update_job_state(slug, status="autoposting", error="", distribution_error="")
     try:
         job_dir = JOBS / slug
+        channels = post_channels_for_content_path(content_path_for_slug(slug))
         result = subprocess.run(
-            [preferred_distribution_python(), str(ROOT / "scripts" / "distribute_content.py"), str(job_dir)],
+            [
+                preferred_distribution_python(),
+                str(ROOT / "scripts" / "distribute_content.py"),
+                str(job_dir),
+                "--channels",
+                *channels,
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -1354,7 +1403,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not (JOBS / slug / "job.json").exists():
             self.send_html(dashboard_html(f"Could not find {slug}."), status=HTTPStatus.NOT_FOUND)
             return
-        queue_job_for_local_post(slug)
+        channels = post_channels_for_content_path(content_path_for_slug(slug))
+        queue_job_for_local_post(slug, channels)
         self.redirect(infer_run_url(slug))
 
     def handle_rerun(self) -> None:
