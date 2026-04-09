@@ -28,6 +28,7 @@ STATE_LOCK = threading.Lock()
 QUEUE_LOCK = threading.Lock()
 AUTHORITY_CONTENT_PATH = "authority_post"
 COMMUNITY_CONTENT_PATH = "community_growth_post"
+YOUTUBE_ONLY_CONTENT_PATH = "youtube_video_only"
 AUTHORITY_POST_CHANNELS = [
     "newsletter",
     "facebook_post",
@@ -42,6 +43,7 @@ COMMUNITY_POST_CHANNELS = [
     "linkedin_post",
     "youtube_package",
 ]
+YOUTUBE_ONLY_POST_CHANNELS: list[str] = []
 DEFAULT_POST_CHANNELS = AUTHORITY_POST_CHANNELS
 
 
@@ -49,12 +51,17 @@ def normalized_content_path(value: str) -> str:
     normalized = value.strip().lower()
     if normalized == COMMUNITY_CONTENT_PATH:
         return COMMUNITY_CONTENT_PATH
+    if normalized == YOUTUBE_ONLY_CONTENT_PATH:
+        return YOUTUBE_ONLY_CONTENT_PATH
     return AUTHORITY_CONTENT_PATH
 
 
 def post_channels_for_content_path(content_path: str) -> list[str]:
-    if normalized_content_path(content_path) == COMMUNITY_CONTENT_PATH:
+    mode = normalized_content_path(content_path)
+    if mode == COMMUNITY_CONTENT_PATH:
         return list(COMMUNITY_POST_CHANNELS)
+    if mode == YOUTUBE_ONLY_CONTENT_PATH:
+        return list(YOUTUBE_ONLY_POST_CHANNELS)
     return list(AUTHORITY_POST_CHANNELS)
 
 
@@ -347,6 +354,8 @@ def dashboard_html(message: str = "") -> str:
         posting_status = posting_queue.get("status", "")
         preview = infer_output_url(slug) if job.get("has_output") else ""
         run_url = infer_run_url(slug)
+        content_path = content_path_for_slug(slug)
+        post_channels = post_channels_for_content_path(content_path)
         run_link = f'<a class="ghost" href="{run_url}">Open Run</a>'
         preview_link = f'<a class="ghost" href="{preview}">Preview</a>' if preview else ""
         content_pack = f"/preview/{slug}/content_pack/README.md" if (JOBS / slug / "output" / "content_pack" / "README.md").exists() else ""
@@ -369,7 +378,7 @@ def dashboard_html(message: str = "") -> str:
             """
         autopost_form = ""
         queue_form = ""
-        if job.get("has_output"):
+        if job.get("has_output") and post_channels:
             autopost_form = f"""
             <form class="inline-form" method="post" action="/autopost">
               <input type="hidden" name="slug" value="{slug}" />
@@ -404,6 +413,7 @@ def dashboard_html(message: str = "") -> str:
                 <span class="status status-{status}">{status}</span>
               </div>
               <p class="meta"><strong>Slug:</strong> {slug}</p>
+              <p class="meta"><strong>Mode:</strong> {content_path}</p>
               <p class="meta"><strong>Updated:</strong> {updated_at}</p>
               <div class="job-actions">
                 {run_link}
@@ -514,6 +524,7 @@ def dashboard_html(message: str = "") -> str:
                 <select id="content_path" name="content_path">
                   <option value="authority_post" selected>Authority Post</option>
                   <option value="community_growth_post">Community Growth Post (graduates/highlights)</option>
+                  <option value="youtube_video_only">YouTube Video Only</option>
                 </select>
               </div>
               <div class="field-full"><label for="headline">Headline</label><input id="headline" type="text" name="headline" placeholder="Leave blank to infer from transcript" /></div>
@@ -650,6 +661,9 @@ def dashboard_html(message: str = "") -> str:
 
 def manifest_from_form(form: cgi.FieldStorage) -> dict:
     content_path = normalized_content_path(form.getfirst("content_path", AUTHORITY_CONTENT_PATH))
+    generate_content_pack = form.getfirst("generate_content_pack", "") == "1"
+    if content_path == YOUTUBE_ONLY_CONTENT_PATH:
+        generate_content_pack = False
     checklist = [line.strip() for line in form.getfirst("checklist", "").splitlines() if line.strip()]
     auto_fill_fields = [
         field
@@ -669,7 +683,7 @@ def manifest_from_form(form: cgi.FieldStorage) -> dict:
         "target_audience": form.getfirst("target_audience", "").strip(),
         "voice_notes": form.getfirst("voice_notes", "").strip(),
         "content_path": content_path,
-        "generate_content_pack": form.getfirst("generate_content_pack", "") == "1",
+        "generate_content_pack": generate_content_pack,
         "checklist": checklist,
         "auto_fill_fields": auto_fill_fields,
     }
@@ -792,6 +806,12 @@ def run_detail_html(slug: str) -> str:
     output_dir = job_dir / "output"
     content_dir = output_dir / "content_pack"
     transcript_path = output_dir / "transcripts" / "transcript.txt"
+    youtube_dir = output_dir / "youtube"
+    youtube_exports = youtube_dir / "exports"
+    youtube_final_path = youtube_exports / "v3_narrative_flow_youtube.mp4"
+    youtube_rough_path = youtube_exports / "v1_rough_cut.mp4"
+    youtube_description_path = youtube_exports / "v3_youtube_description.md"
+    youtube_chapters_path = youtube_exports / "v3_chapters.txt"
     preview_url = infer_output_url(slug) if (output_dir / "index.html").exists() else ""
     state = load_state().get("jobs", {}).get(slug, {})
     site_url = state.get("site_url", "")
@@ -801,6 +821,8 @@ def run_detail_html(slug: str) -> str:
     distribution_error = state.get("distribution_error", "")
     posting_queue = queue_record(slug)
     posting_status = posting_queue.get("status", "")
+    content_path = normalized_content_path(str(manifest.get("content_path", AUTHORITY_CONTENT_PATH)))
+    post_channels = post_channels_for_content_path(content_path)
     progress_value = {
         "queued": 14,
         "running": 58,
@@ -813,6 +835,59 @@ def run_detail_html(slug: str) -> str:
     tabs: list[str] = []
     panels: list[str] = []
     available = False
+
+    if youtube_final_path.exists() or youtube_rough_path.exists():
+        tabs.append('<a class="run-tab" href="#youtube-video">YouTube Video</a>')
+        final_markup = (
+            f'<div class="video-preview"><h3>Final (V3 Narrative)</h3><video controls preload="metadata"><source src="/preview/{slug}/youtube/exports/v3_narrative_flow_youtube.mp4" type="video/mp4" /></video></div>'
+            if youtube_final_path.exists()
+            else ""
+        )
+        rough_markup = (
+            f'<div class="video-preview"><h3>Rough Cut</h3><video controls preload="metadata"><source src="/preview/{slug}/youtube/exports/v1_rough_cut.mp4" type="video/mp4" /></video></div>'
+            if youtube_rough_path.exists()
+            else ""
+        )
+        panels.append(
+            f"""
+            <section class="run-panel" id="youtube-video">
+              <div class="run-panel-head">
+                <h2>YouTube Video Review</h2>
+              </div>
+              {final_markup}
+              {rough_markup}
+            </section>
+            """
+        )
+
+    if youtube_description_path.exists():
+        tabs.append('<a class="run-tab" href="#youtube-description">YouTube Description</a>')
+        panels.append(
+            f"""
+            <section class="run-panel" id="youtube-description">
+              <div class="run-panel-head">
+                <h2>YouTube Description</h2>
+                <a class="ghost" href="/preview/{slug}/youtube/exports/v3_youtube_description.md" target="_blank" rel="noreferrer">Open File</a>
+              </div>
+              <textarea readonly>{escape(read_optional_text(youtube_description_path))}</textarea>
+            </section>
+            """
+        )
+
+    if youtube_chapters_path.exists():
+        tabs.append('<a class="run-tab" href="#youtube-chapters">YouTube Chapters</a>')
+        panels.append(
+            f"""
+            <section class="run-panel" id="youtube-chapters">
+              <div class="run-panel-head">
+                <h2>YouTube Chapters</h2>
+                <a class="ghost" href="/preview/{slug}/youtube/exports/v3_chapters.txt" target="_blank" rel="noreferrer">Open File</a>
+              </div>
+              <textarea readonly>{escape(read_optional_text(youtube_chapters_path))}</textarea>
+            </section>
+            """
+        )
+
     for tab_id, label, filename in content_file_specs():
         file_path = content_dir / filename
         if not file_path.exists():
@@ -859,6 +934,12 @@ def run_detail_html(slug: str) -> str:
         asset_links.append(f'<a class="ghost" href="{preview_url}">Landing Page</a>')
     if (output_dir / "edited_video" / "lead-magnet.mp4").exists():
         asset_links.append(f'<a class="ghost" href="/preview/{slug}/edited_video/lead-magnet.mp4" target="_blank" rel="noreferrer">Edited Video</a>')
+    if youtube_final_path.exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/youtube/exports/v3_narrative_flow_youtube.mp4" target="_blank" rel="noreferrer">YouTube Final</a>')
+    if youtube_description_path.exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/youtube/exports/v3_youtube_description.md" target="_blank" rel="noreferrer">YouTube Description</a>')
+    if youtube_chapters_path.exists():
+        asset_links.append(f'<a class="ghost" href="/preview/{slug}/youtube/exports/v3_chapters.txt" target="_blank" rel="noreferrer">YouTube Chapters</a>')
     if (output_dir / "deliverables" / "companion-guide.pdf").exists():
         asset_links.append(f'<a class="ghost" href="/preview/{slug}/deliverables/companion-guide.pdf" target="_blank" rel="noreferrer">PDF</a>')
     if (content_dir / "distribution-results.json").exists():
@@ -897,6 +978,9 @@ def run_detail_html(slug: str) -> str:
       .run-panel-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px}}
       .run-panel-actions{{display:flex;gap:10px;flex-wrap:wrap}}
       .content-preview{{width:100%;min-height:240px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:16px/1.7 "Avenir Next","Segoe UI",sans-serif;white-space:pre-wrap}}
+      .video-preview{{margin-top:14px;padding:14px;border-radius:18px;border:1px solid var(--line);background:#fffdf9}}
+      .video-preview h3{{margin:0 0 10px;font-size:1.05rem;font-family:"Avenir Next","Segoe UI",sans-serif}}
+      .video-preview video{{width:100%;border-radius:12px;background:#000}}
       .raw-toggle{{margin-top:14px}}
       .raw-toggle summary{{cursor:pointer;font-weight:700;color:var(--muted)}}
       textarea{{width:100%;min-height:520px;padding:18px;border-radius:20px;border:1px solid var(--line);background:#fffdf9;color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}}
@@ -922,14 +1006,8 @@ def run_detail_html(slug: str) -> str:
         <div class="topbar-links">
           <a class="ghost" href="/">Back To Dashboard</a>
           {''.join(asset_links)}
-          <form method="post" action="/autopost">
-            <input type="hidden" name="slug" value="{escape(slug)}" />
-            <button type="submit" class="ghost">Approve &amp; Post</button>
-          </form>
-          <form method="post" action="/queue-post">
-            <input type="hidden" name="slug" value="{escape(slug)}" />
-            <button type="submit" class="ghost">Queue Local Post</button>
-          </form>
+          {'<form method="post" action="/autopost"><input type="hidden" name="slug" value="' + escape(slug) + '" /><button type="submit" class="ghost">Approve &amp; Post</button></form>' if post_channels else ''}
+          {'<form method="post" action="/queue-post"><input type="hidden" name="slug" value="' + escape(slug) + '" /><button type="submit" class="ghost">Queue Local Post</button></form>' if post_channels else ''}
           <form method="post" action="/rerun">
             <input type="hidden" name="slug" value="{escape(slug)}" />
             <button type="submit" class="ghost">Rerun Job</button>
@@ -954,6 +1032,7 @@ def run_detail_html(slug: str) -> str:
         <p class="eyebrow">Run Summary</p>
         <div class="meta-grid">
           <div class="meta-card"><strong>Slug</strong>{escape(slug)}</div>
+          <div class="meta-card"><strong>Mode</strong>{escape(content_path)}</div>
           <div class="meta-card"><strong>Status</strong>{escape(state.get('status', 'unknown'))}</div>
           <div class="meta-card"><strong>Updated</strong>{escape(state.get('updated_at', ''))}</div>
           <div class="meta-card"><strong>Content Folder</strong><a href="/preview/{slug}/content_pack" class="ghost">Open Folder</a></div>
@@ -1097,6 +1176,9 @@ def autopost_existing_job(slug: str) -> None:
     try:
         job_dir = JOBS / slug
         channels = post_channels_for_content_path(content_path_for_slug(slug))
+        if not channels:
+            update_job_state(slug, status="completed", distribution_summary="No autopost channels for youtube_video_only mode.")
+            return
         result = subprocess.run(
             [
                 preferred_distribution_python(),
@@ -1404,6 +1486,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_html(dashboard_html(f"Could not find {slug}."), status=HTTPStatus.NOT_FOUND)
             return
         channels = post_channels_for_content_path(content_path_for_slug(slug))
+        if not channels:
+            self.send_html(dashboard_html("This mode does not have social posting channels to queue."), status=HTTPStatus.BAD_REQUEST)
+            return
         queue_job_for_local_post(slug, channels)
         self.redirect(infer_run_url(slug))
 

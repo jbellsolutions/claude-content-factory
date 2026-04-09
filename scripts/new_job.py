@@ -38,6 +38,11 @@ def main() -> None:
     parser.add_argument("--headline")
     parser.add_argument("--subheadline")
     parser.add_argument("--lead")
+    parser.add_argument(
+        "--content-path",
+        choices=["authority_post", "community_growth_post", "youtube_video_only"],
+        default="authority_post",
+    )
     args = parser.parse_args()
 
     ensure_runtime_dirs()
@@ -66,8 +71,8 @@ def main() -> None:
         "kit_form_action": env.get("KIT_FORM_ACTION", ""),
         "kit_button_text": env.get("KIT_BUTTON_TEXT", "Get Access"),
         "kit_tag": env.get("KIT_TAG", ""),
-        "content_path": "authority_post",
-        "generate_content_pack": True,
+        "content_path": args.content_path,
+        "generate_content_pack": args.content_path != "youtube_video_only",
         "brand_name": env.get("BRAND_NAME", title),
         "target_audience": env.get("TARGET_AUDIENCE", "Founders, executives, operators, and employees leveling up with AI"),
         "voice_notes": env.get("VOICE_NOTES", "Authority content. Useful, specific, not salesy, not promotional."),

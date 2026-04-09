@@ -11,7 +11,7 @@ cp config/example.env config/.env
 
 This repo now has multiple output layers:
 
-- the existing video lead-magnet pipeline
+- a YouTube-ready video pipeline (rough cut, polished final, chapters, and description)
 - a transcript-driven, ready-to-post authority content pack for Facebook, LinkedIn, Medium, Substack, newsletter, and YouTube publishing
 - a community growth path for graduate/highlight posts (Facebook, LinkedIn, and YouTube package)
 
@@ -23,8 +23,8 @@ This repo is the engine. It is meant to stay on your computer and run the same w
 2. Build a job folder with its own manifest and output site.
 3. Clean transcript text and captions.
 4. Reduce filler-only transcript cues and dead space.
-5. Render branded intro/outro assets and a poster frame.
-6. Build the edited video.
+5. Render YouTube intro/outro assets and a poster frame.
+6. Build the edited video plus YouTube review outputs.
 7. Build the PDF companion.
 8. Build the landing page with opt-in capture.
 9. Generate an authority content pack from the transcript when `OPENAI_API_KEY` is available.
@@ -37,7 +37,7 @@ There are three layers:
 - `scripts/new_job.py`
   - Creates a new job from your source files and a default manifest.
 - `scripts/run_job.py`
-  - Runs the full pipeline for that job.
+  - Runs the full pipeline for that job (including YouTube outputs whenever a video is present).
 - `scripts/watch_dropfolder.py`
   - Watches `inbox/` and automatically creates and runs jobs when new folders arrive.
 - `scripts/slack_socket_mode.py`
@@ -67,7 +67,9 @@ The runner stays the same. Only the trigger changes.
 - `jobs/<slug>/job.json`
   - Manifest for one job
 - `jobs/<slug>/output/`
-  - Generated landing page, edited video, PDF, captions, assets, and content pack
+  - Generated landing page, edited video, PDF, captions, assets, content pack, and YouTube outputs
+- `jobs/<slug>/output/youtube/exports/`
+  - `v1_rough_cut.mp4`, `v3_narrative_flow_youtube.mp4`, `v3_chapters.txt`, `v3_youtube_description.md`
 - `scripts/new_job.py`
   - Creates a job folder and default manifest
 - `scripts/run_job.py`
@@ -212,9 +214,11 @@ What it does:
 - choose a content path:
   - `Authority Post` (default)
   - `Community Growth Post` (graduates/highlights)
+  - `YouTube Video Only`
 - set title, headline, subheadline, lead, checklist, CTA, brand context, and repo name
 - queue the build in the background
 - preview the generated landing page locally
+- review final/rough YouTube video, YouTube description, and chapters in the run page
 - open the generated content pack
 - publish a completed job to GitHub from the same UI
 - approve a completed job for posting and write distribution results back into the run workspace
@@ -247,6 +251,10 @@ When `content_path=community_growth_post`, the pipeline generates:
 - YouTube publishing package
 
 This path is designed for graduate spotlights and group highlights, with a fixed middle blurb, fixed case-study block, and fixed closing CTA block loaded from `content_dna/community_growth_template.json`.
+
+### YouTube-only mode
+
+When `content_path=youtube_video_only`, the app still runs the full YouTube pipeline for uploaded video, but skips non-video content-pack generation.
 
 ### Approval-based posting
 

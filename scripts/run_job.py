@@ -8,6 +8,7 @@ import mimetypes
 import re
 import shutil
 import subprocess
+import sys
 import textwrap
 import uuid
 import urllib.request
@@ -59,6 +60,10 @@ REPLACEMENTS = {
     "Boris Chestney": "Boris Cherny",
 }
 
+AUTHORITY_CONTENT_PATH = "authority_post"
+COMMUNITY_CONTENT_PATH = "community_growth_post"
+YOUTUBE_ONLY_CONTENT_PATH = "youtube_video_only"
+
 DROP_PATTERNS = [
     re.compile(r"^(alright|alrighty|cool|boom|good stuff|fair enough)[.! ]*$", re.I),
     re.compile(r"^(yes|right|okay|thank you|sure)[.! ]*$", re.I),
@@ -98,6 +103,143 @@ def to_vtt_timestamp(seconds: float) -> str:
 
 def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
+def normalize_content_path(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized == COMMUNITY_CONTENT_PATH:
+        return COMMUNITY_CONTENT_PATH
+    if normalized == YOUTUBE_ONLY_CONTENT_PATH:
+        return YOUTUBE_ONLY_CONTENT_PATH
+    return AUTHORITY_CONTENT_PATH
+
+
+def transcript_text_from_json(transcript_json: Path) -> str:
+    if not transcript_json.exists():
+        return ""
+    try:
+        payload = json.loads(transcript_json.read_text())
+    except json.JSONDecodeError:
+        return ""
+    segments = payload.get("segments", [])
+    lines = [str(segment.get("text", "")).strip() for segment in segments]
+    return "\n\n".join(line for line in lines if line).strip()
+
+
+def run_youtube_pipeline(job_dir: Path, manifest: dict) -> dict[str, str]:
+    source_rel = manifest.get("source_video")
+    if not source_rel:
+        return {}
+
+    source_video = (job_dir / source_rel).resolve()
+    if not source_video.exists():
+        return {}
+
+    pipeline_root = job_dir / "output" / "youtube"
+    if pipeline_root.exists():
+        shutil.rmtree(pipeline_root)
+    (pipeline_root / "input").mkdir(parents=True, exist_ok=True)
+
+    pipeline_source = pipeline_root / "input" / "source.mp4"
+    shutil.copy2(source_video, pipeline_source)
+
+    title = str(manifest.get("title") or "YouTube Video").strip()
+    hook = str(manifest.get("headline") or manifest.get("lead") or "A practical workflow you can apply immediately").strip()
+    pipeline_script = ROOT / "scripts" / "youtube_video_pipeline.py"
+    package_script = ROOT / "scripts" / "youtube_narrative_and_package.py"
+
+    stages = ["transcribe", "detect-cuts", "assemble-rough", "polish-final"]
+    for stage in stages:
+        run(
+            [
+                sys.executable,
+                str(pipeline_script),
+                "--root",
+                str(pipeline_root),
+                "--source",
+                "input/source.mp4",
+                "--title",
+                title,
+                "--hook",
+                hook,
+                "--stage",
+                stage,
+            ]
+        )
+
+    run(
+        [
+            sys.executable,
+            str(package_script),
+            "--root",
+            str(pipeline_root),
+            "--source",
+            "input/source.mp4",
+        ]
+    )
+
+    final_video = pipeline_root / "exports" / "v3_narrative_flow_youtube.mp4"
+    if not final_video.exists():
+        final_video = pipeline_root / "exports" / "v2_final_youtube_1080p.mp4"
+    rough_video = pipeline_root / "exports" / "v1_rough_cut.mp4"
+    chapters = pipeline_root / "exports" / "v3_chapters.txt"
+    description = pipeline_root / "exports" / "v3_youtube_description.md"
+    transcript_json = pipeline_root / "work" / "transcript" / "transcript.json"
+
+    outputs: dict[str, str] = {
+        "root": str(pipeline_root),
+        "transcript_text": transcript_text_from_json(transcript_json),
+    }
+    if final_video.exists():
+        outputs["final_video"] = str(final_video)
+    if rough_video.exists():
+        outputs["rough_video"] = str(rough_video)
+    if chapters.exists():
+        outputs["chapters"] = str(chapters)
+    if description.exists():
+        outputs["description"] = str(description)
+    return outputs
+
+
+def sync_youtube_outputs_to_legacy_paths(job_dir: Path, youtube_outputs: dict[str, str]) -> Path | None:
+    final_video_raw = youtube_outputs.get("final_video")
+    if not final_video_raw:
+        return None
+
+    final_video = Path(final_video_raw)
+    if not final_video.exists():
+        return None
+
+    edited_dir = job_dir / "output" / "edited_video"
+    edited_dir.mkdir(parents=True, exist_ok=True)
+    lead_magnet = edited_dir / "lead-magnet.mp4"
+    shutil.copy2(final_video, lead_magnet)
+
+    rough_video_raw = youtube_outputs.get("rough_video")
+    if rough_video_raw:
+        rough_video = Path(rough_video_raw)
+        if rough_video.exists():
+            shutil.copy2(rough_video, edited_dir / "v1_rough_cut.mp4")
+
+    assets_dir = job_dir / "output" / "site" / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    run(
+        [
+            ffmpeg,
+            "-y",
+            "-ss",
+            "00:00:08",
+            "-i",
+            str(lead_magnet),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(assets_dir / "poster.jpg"),
+        ]
+    )
+    return lead_magnet
 
 
 def font(paths: str | list[str], size: int) -> ImageFont.ImageFont:
@@ -701,6 +843,9 @@ def render_page(job_dir: Path, manifest: dict, has_captions: bool, has_video: bo
 def build_job(job_dir: Path) -> None:
     manifest = load_manifest(job_dir)
     env = load_env_config()
+    manifest["content_path"] = normalize_content_path(str(manifest.get("content_path", AUTHORITY_CONTENT_PATH)))
+    if manifest["content_path"] == YOUTUBE_ONLY_CONTENT_PATH:
+        manifest["generate_content_pack"] = False
     default_voice_notes = env.get(
         "VOICE_NOTES",
         "Direct, tactical, founder-led, authority-building, clear, high-agency, and useful. Sound like a real operator. Not salesy, not promotional, not generic. Use light platform-native emojis where natural.",
@@ -716,6 +861,7 @@ def build_job(job_dir: Path) -> None:
     segments: list[list[float]] = []
     has_captions = False
     transcript_path = None
+    youtube_outputs: dict[str, str] = {}
     screenshot_context = ""
     if manifest.get("source_screenshot"):
         api_key = env.get("OPENAI_API_KEY", "").strip()
@@ -747,6 +893,17 @@ def build_job(job_dir: Path) -> None:
     else:
         transcript_path = generate_transcript_from_media(job_dir, manifest, env)
 
+    if manifest.get("source_video"):
+        try:
+            youtube_outputs = run_youtube_pipeline(job_dir, manifest)
+        except Exception as exc:
+            manifest["youtube_pipeline_error"] = str(exc)
+        if (not transcript_path or not transcript_path.exists()) and youtube_outputs.get("transcript_text"):
+            transcript_dir = output_dir / "transcripts"
+            transcript_dir.mkdir(parents=True, exist_ok=True)
+            transcript_path = transcript_dir / "transcript.txt"
+            transcript_path.write_text(youtube_outputs["transcript_text"].strip())
+
     if screenshot_context:
         transcript_dir = output_dir / "transcripts"
         transcript_dir.mkdir(parents=True, exist_ok=True)
@@ -763,12 +920,15 @@ def build_job(job_dir: Path) -> None:
         manifest = infer_manifest_fields(manifest, transcript_path.read_text())
         save_manifest(job_dir, manifest)
     render_brand_assets(job_dir, manifest)
-    rendered_video = render_video(job_dir, manifest, segments)
+    rendered_video = sync_youtube_outputs_to_legacy_paths(job_dir, youtube_outputs)
+    if rendered_video is None:
+        rendered_video = render_video(job_dir, manifest, segments)
     screenshot_relpath = copy_source_screenshot(job_dir, manifest)
     render_pdf(job_dir, manifest)
     transcript_text = transcript_path.read_text().strip() if transcript_path and transcript_path.exists() else ""
     render_page(job_dir, manifest, has_captions, bool(rendered_video), transcript_text, screenshot_relpath)
     generate_content_pack(job_dir, manifest, transcript_path)
+    save_manifest(job_dir, manifest)
     (output_dir / ".nojekyll").write_text("")
     print(f"Built {job_dir.name}")
 

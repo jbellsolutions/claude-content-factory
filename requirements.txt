@@ -3,3 +3,4 @@ imageio-ffmpeg
 reportlab
 slack_sdk
 browser-use
+faster-whisper

@@ -20,6 +20,7 @@ TITAN_SWIPE_PATH = TITAN_ROOT / "SWIPE_FILE_CONTEXT.md"
 TITAN_AGENT_DIR = TITAN_ROOT / "agents"
 AUTHORITY_CONTENT_PATH = "authority_post"
 COMMUNITY_CONTENT_PATH = "community_growth_post"
+YOUTUBE_ONLY_CONTENT_PATH = "youtube_video_only"
 BRAND_REPLACEMENTS = {
     "Quad Code": "Claude Code",
     "quad code": "Claude Code",
@@ -66,6 +67,8 @@ def normalize_content_path(value: str) -> str:
     normalized = value.strip().lower()
     if normalized == COMMUNITY_CONTENT_PATH:
         return COMMUNITY_CONTENT_PATH
+    if normalized == YOUTUBE_ONLY_CONTENT_PATH:
+        return YOUTUBE_ONLY_CONTENT_PATH
     return AUTHORITY_CONTENT_PATH
 
 
@@ -886,6 +889,10 @@ def generate_content_pack(job_dir: Path, manifest: dict, transcript_path: Path |
         )
     )
     generated_files.append("source-context.md")
+
+    if content_path == YOUTUBE_ONLY_CONTENT_PATH:
+        write_readme(output_dir, manifest, generated_files, "YouTube-only mode selected, so non-video content-pack generation was skipped.")
+        return
 
     if not transcript_text:
         write_readme(output_dir, manifest, generated_files, "No content pack was generated because this job does not have a transcript.")
